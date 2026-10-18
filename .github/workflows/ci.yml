@@ -59,4 +59,8 @@ jobs:
         run: pnpm build
 
       - name: Synthesize CDK
+        # Runner images set AWS_DEFAULT_REGION=us-east-1. AWS_REGION takes precedence in the
+        # CDK CLI, so the ask app synthesizes for its required region.
+        env:
+          AWS_REGION: us-west-2
         run: pnpm synth
