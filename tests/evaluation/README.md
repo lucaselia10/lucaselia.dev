@@ -2,6 +2,8 @@
 
 `cases.json` is the tracked set of initial route expectations. `cases.schema.json` validates it.
 
+The production assistant (ADR-009) uses the same prompt and evidence as local model mode, so the live questions below are also the production evaluation (Slice 2, Round 5). The Knowledge Base path and its grounding prompt were removed; `grounded` in a case now means a model-written answer from the evidence package.
+
 Each case records a stable id, a question, the expected route (`exact`, `grounded`, or `unsupported`), expected document and chunk ids when a future retriever should find them, forbidden document ids, and a short reason. These are evaluation expectations. They are not production prompt examples, and they do not assert model wording.
 
 The fictional Lumen Harbor fixture is forbidden in every case. The cases still expect exact facts on the deterministic path. [ADR-006](../../docs/adr/006-model-conversation-and-streaming.md) accepts model composition of ordinary answers, including simple facts. Grounded cases wait for a real retriever, and no semantic-quality score is calculated yet.

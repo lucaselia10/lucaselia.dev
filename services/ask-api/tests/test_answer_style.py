@@ -1,4 +1,4 @@
-"""Answer-wording rules, shared by the local and production prompts.
+"""Answer-wording rules in the local-3 prompt, which production also uses (ADR-009).
 
 Each rule comes from an answer observed in the October 14, 2026 live recheck; the observed
 wording is recorded in tests/evaluation/README.md. These tests check the prompts, not model
@@ -7,18 +7,12 @@ output: wording is judged in live runs.
 
 from __future__ import annotations
 
-import pytest
-
 from ask_api.answer_style import ANSWER_STYLE_RULES
-from ask_api.grounding_prompt import GROUNDING_SYSTEM_PROMPT
 from ask_api.local_conversation import LOCAL_SYSTEM_PROMPT
 
-PROMPTS = {"local": LOCAL_SYSTEM_PROMPT, "production": GROUNDING_SYSTEM_PROMPT}
 
-
-@pytest.mark.parametrize("name", PROMPTS)
-def test_both_prompts_carry_the_shared_style_rules(name: str) -> None:
-    assert ANSWER_STYLE_RULES in PROMPTS[name]
+def test_the_prompt_carries_the_shared_style_rules() -> None:
+    assert ANSWER_STYLE_RULES in LOCAL_SYSTEM_PROMPT
 
 
 def test_answers_never_name_the_evidence_or_the_data() -> None:
@@ -54,8 +48,6 @@ def test_no_interpretations_beyond_the_pages() -> None:
 
 
 def test_the_style_rules_are_wording_only() -> None:
-    """Grounding still lives in each prompt; the style block cannot loosen it."""
-    for prompt in PROMPTS.values():
-        assert "third person" in prompt
+    """Grounding still lives in the prompt; the style block cannot loosen it."""
+    assert "third person" in LOCAL_SYSTEM_PROMPT
     assert "Do not infer facts the evidence does not state." in LOCAL_SYSTEM_PROMPT
-    assert "Do not infer facts the supplied sources do not support." in GROUNDING_SYSTEM_PROMPT

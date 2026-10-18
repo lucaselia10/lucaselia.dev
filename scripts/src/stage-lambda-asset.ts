@@ -1,8 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import {
+  askApiHandlerScriptPath,
   askApiPackageDir,
   askApiProjectDir,
   lambdaAssetPath,
@@ -22,6 +32,7 @@ const skippedDirectories = new Set([
   "tests",
 ]);
 
+/** Files the function needs, relative to the ask_api package directory inside the asset. */
 export const lambdaAssetRequiredPaths = [
   "__init__.py",
   "production_app.py",
@@ -32,25 +43,22 @@ export const lambdaAssetRequiredPaths = [
   "local_conversation.py",
   "local_evidence.py",
   "answer_style.py",
+  "citation_safety.py",
+  "index_loader.py",
+  "exact_answers.py",
   "model_providers/__init__.py",
   "model_providers/base.py",
   "model_providers/anthropic_api.py",
   "model_providers/fixture.py",
-  "handler.py",
-  "exact_answers.py",
-  "index_loader.py",
-  "grounding.py",
-  "grounding_errors.py",
-  "grounding_prompt.py",
-  "grounding_config.py",
-  "grounding_factory.py",
-  "model_output.py",
-  "citation_safety.py",
-  "bedrock_retriever.py",
-  "bedrock_generator.py",
   "data/__init__.py",
   "data/career-index.json",
 ] as const;
+
+/** The asset is the function's task root: the package, its dependencies, and run.sh. */
+export const lambdaPackageDirectoryName = "ask_api";
+export const lambdaHandlerScriptName = "run.sh";
+/** The Python 3.13 runtime provides boto3 (ADR-009), so the asset must not carry a copy. */
+export const lambdaForbiddenTopLevel = ["boto3", "botocore", "s3transfer"] as const;
 
 /** Where the evidence package sits inside the ask_api package, in the asset and locally. */
 export const evidenceDirectoryName = join("data", "evidence");
@@ -62,6 +70,7 @@ export function stageLambdaAsset(
   destination = lambdaAssetPath,
   evidenceDir = retrievalDirectory,
   evidenceManifest = retrievalManifestPath,
+  handlerScript = askApiHandlerScriptPath,
 ): void {
   if (!statSync(indexPath, { throwIfNoEntry: false })?.isFile()) {
     throw new Error(
@@ -71,24 +80,32 @@ export function stageLambdaAsset(
   assertEvidencePresent(evidenceDir, evidenceManifest);
 
   rmSync(destination, { recursive: true, force: true });
-  mkdirSync(destination, { recursive: true });
-  copyPythonPackage(sourceDir, destination);
-  const indexDestination = join(destination, "data", "career-index.json");
+  const packageDir = join(destination, lambdaPackageDirectoryName);
+  mkdirSync(packageDir, { recursive: true });
+  copyPythonPackage(sourceDir, packageDir);
+  const indexDestination = join(packageDir, "data", "career-index.json");
   mkdirSync(dirname(indexDestination), { recursive: true });
   cpSync(indexPath, indexDestination);
-  copyEvidencePackage(evidenceDir, evidenceManifest, destination);
+  copyEvidencePackage(evidenceDir, evidenceManifest, packageDir);
+  const handlerDestination = join(destination, lambdaHandlerScriptName);
+  cpSync(handlerScript, handlerDestination);
+  chmodSync(handlerDestination, 0o755);
   installPinnedRuntimeDependencies(destination);
   removeInstallMetadata(destination);
 
   for (const required of [
-    ...lambdaAssetRequiredPaths,
-    evidenceManifestName,
+    ...lambdaAssetRequiredPaths.map((path) => join(lambdaPackageDirectoryName, path)),
+    join(lambdaPackageDirectoryName, evidenceManifestName),
+    lambdaHandlerScriptName,
     "anthropic/__init__.py",
-    "boto3/__init__.py",
-    "botocore/__init__.py",
   ]) {
     if (!statSync(join(destination, required), { throwIfNoEntry: false })?.isFile()) {
       throw new Error(`Lambda asset is missing ${required}.`);
+    }
+  }
+  for (const forbidden of lambdaForbiddenTopLevel) {
+    if (existsSync(join(destination, forbidden))) {
+      throw new Error(`Lambda asset must not include ${forbidden}; the runtime provides it.`);
     }
   }
 }

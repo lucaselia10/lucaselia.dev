@@ -3,13 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "synth": "pnpm -w prepare:api && cdk synth",
+    "synth": "pnpm -w prepare:api && pnpm -w prepare:web-adapter && cdk synth --app 'tsx bin/site.ts' --output cdk.out.site -c siteHostedZoneId=Z0PLACEHOLDER0ZONE --all",
     "typecheck": "tsc --noEmit",
     "test": "pnpm -w prepare:api && vitest run",
-    "synth:site": "cdk synth --app 'tsx bin/site.ts' --output cdk.out.site -c siteHostedZoneId=${SITE_HOSTED_ZONE_ID:?Set SITE_HOSTED_ZONE_ID to the Route 53 hosted zone id for lucaselia.dev} PortfolioSiteStack",
-    "deploy:site": "cdk deploy --app 'tsx bin/site.ts' --output cdk.out.site -c siteHostedZoneId=${SITE_HOSTED_ZONE_ID:?Set SITE_HOSTED_ZONE_ID to the Route 53 hosted zone id for lucaselia.dev} PortfolioSiteStack",
-    "diff:site": "cdk diff --app 'tsx bin/site.ts' --output cdk.out.site -c siteHostedZoneId=${SITE_HOSTED_ZONE_ID:?Set SITE_HOSTED_ZONE_ID to the Route 53 hosted zone id for lucaselia.dev} PortfolioSiteStack",
-    "destroy:site": "cdk destroy --app 'tsx bin/site.ts' --output cdk.out.site -c siteHostedZoneId=${SITE_HOSTED_ZONE_ID:?Set SITE_HOSTED_ZONE_ID to the Route 53 hosted zone id for lucaselia.dev} PortfolioSiteStack",
+    "synth:site": "pnpm -w prepare:api && pnpm -w prepare:web-adapter && cdk synth --app 'tsx bin/site.ts' --output cdk.out.site -c siteHostedZoneId=${SITE_HOSTED_ZONE_ID:?Set SITE_HOSTED_ZONE_ID to the Route 53 hosted zone id for lucaselia.dev} --all",
+    "deploy:site": "pnpm -w prepare:api && pnpm -w prepare:web-adapter && cdk deploy --app 'tsx bin/site.ts' --output cdk.out.site -c siteHostedZoneId=${SITE_HOSTED_ZONE_ID:?Set SITE_HOSTED_ZONE_ID to the Route 53 hosted zone id for lucaselia.dev} --all",
+    "diff:site": "pnpm -w prepare:api && pnpm -w prepare:web-adapter && cdk diff --app 'tsx bin/site.ts' --output cdk.out.site -c siteHostedZoneId=${SITE_HOSTED_ZONE_ID:?Set SITE_HOSTED_ZONE_ID to the Route 53 hosted zone id for lucaselia.dev} --all",
+    "destroy:site": "cdk destroy --app 'tsx bin/site.ts' --output cdk.out.site -c siteHostedZoneId=${SITE_HOSTED_ZONE_ID:?Set SITE_HOSTED_ZONE_ID to the Route 53 hosted zone id for lucaselia.dev} --all",
     "bootstrap:site": "cdk bootstrap --app 'tsx bin/site.ts' --output cdk.out.site -c siteHostedZoneId=${SITE_HOSTED_ZONE_ID:?Set SITE_HOSTED_ZONE_ID to the Route 53 hosted zone id for lucaselia.dev}"
   },
   "dependencies": {

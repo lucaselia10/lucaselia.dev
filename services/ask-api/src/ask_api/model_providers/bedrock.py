@@ -6,14 +6,10 @@ default credential chain; raw access-key variables are refused.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator, Mapping
 from typing import TYPE_CHECKING, Protocol, cast
 
-from ask_api.grounding_config import (
-    APPLICATION_REGION,
-    DEFAULT_NOVA_INFERENCE_PROFILE_ID,
-    is_nova_inference_profile,
-)
 from ask_api.local_conversation import TokenUsage
 from ask_api.model_providers.base import (
     CONNECT_TIMEOUT_SECONDS,
@@ -30,6 +26,10 @@ from ask_api.model_providers.base import (
 )
 
 NAME = "bedrock"
+#: Local Bedrock mode only. Production does not use Bedrock (ADR-009).
+APPLICATION_REGION = "us-west-2"
+DEFAULT_NOVA_INFERENCE_PROFILE_ID = "us.amazon.nova-2-lite-v1:0"
+_NOVA_INFERENCE_PROFILE_PATTERN = re.compile(r"^us\.amazon\.nova-2-lite-v[0-9]+:[0-9]+$")
 PROFILE_MESSAGE = "Live model mode needs LOCAL_AWS_PROFILE set to a named AWS profile."
 RAW_KEYS_MESSAGE = (
     "Live model mode refuses AWS access keys in the environment. Use LOCAL_AWS_PROFILE."
@@ -176,3 +176,8 @@ def from_environment(environ: Mapping[str, str]) -> BedrockProvider:
     profile = configured_profile(environ)
     model_id = configured_model_id(environ)
     return BedrockProvider(live_stream_client(profile), model_id)
+
+
+def is_nova_inference_profile(value: str) -> bool:
+    """Return whether a model id is the Nova 2 Lite US inference profile shape."""
+    return _NOVA_INFERENCE_PROFILE_PATTERN.fullmatch(value) is not None

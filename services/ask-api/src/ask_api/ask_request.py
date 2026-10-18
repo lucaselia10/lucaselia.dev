@@ -1,7 +1,7 @@
 """Validation of an ask request body.
 
 The exact-answer Lambda handler, the development server, and the production app share
-this. It has no dependency on grounding or model code.
+this. It has no dependency on model code.
 """
 
 from __future__ import annotations

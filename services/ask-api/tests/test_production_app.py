@@ -43,6 +43,7 @@ CHUNK_ID = "aws-sde-ii:role-description:0"
 QUESTION = "Which distinctive-question-marker work improved reliability?"
 ANSWER = "Lucas improved distinctive-answer-marker reliability."
 HISTORY_TEXT = "distinctive-history-marker"
+REQUEST_ID = "00000000-0000-4000-8000-00000000000a"
 ALLOWED_STATUSES = {200, 400, 413, 429, 503}
 
 
@@ -126,7 +127,7 @@ def make_app(
         provider=source,
         log=collected.append,
         clock=tick,
-        new_request_id=lambda: "request-1",
+        new_request_id=lambda: REQUEST_ID,
         gate=PauseGate(tick),
     )
 
@@ -151,7 +152,7 @@ def test_answer_streams_the_existing_contract_without_development_fields() -> No
     done = events[-1]
     assert done["type"] == "done"
     assert done["answer"] == ANSWER
-    assert done["requestId"] == "request-1"
+    assert done["requestId"] == REQUEST_ID
     assert done["fixture"] is False
     assert done["citations"] == [
         {
@@ -310,7 +311,7 @@ def test_spend_limit_or_overload_pauses_the_environment() -> None:
     first = app.handle("POST", ASK_PATH, ask_body())
     assert isinstance(first, JsonReply)
     assert first.status == 503
-    assert first.payload == {"message": PAUSED_MESSAGE, "requestId": "request-1", "code": "paused"}
+    assert first.payload == {"message": PAUSED_MESSAGE, "requestId": REQUEST_ID, "code": "paused"}
 
     provider.script = answer_script
     clock.now += PAUSE_SECONDS - 1
@@ -377,11 +378,13 @@ def test_one_log_line_per_request_with_no_question_answer_or_history() -> None:
     app.handle("POST", ASK_PATH, b'{"question": "distinctive-invalid-marker"}')
 
     assert lines == [
-        "ask outcome=done status=200 input_tokens=120 output_tokens=30 latency_ms=250",
-        "ask outcome=invalid status=400 input_tokens=- output_tokens=- latency_ms=0",
+        f"ask request={REQUEST_ID} outcome=done status=200 input_tokens=120 "
+        "output_tokens=30 latency_ms=250",
+        f"ask request={REQUEST_ID} outcome=invalid status=400 input_tokens=- "
+        "output_tokens=- latency_ms=0",
     ]
     joined = "\n".join(lines)
-    for marker in ("distinctive", "Lucas", "SOURCES", CHUNK_ID, "request-1"):
+    for marker in ("distinctive", "Lucas", "SOURCES", CHUNK_ID):
         assert marker not in joined
 
 
@@ -473,7 +476,10 @@ def test_chunks_reach_the_client_before_the_model_finishes(
     events = [json.loads(line) for line in dechunk(raw).decode().splitlines()]
     assert [event["type"] for event in events] == ["delta", "delta", "done"]
     assert "usage" not in events[-1]
-    assert lines == ["ask outcome=done status=200 input_tokens=120 output_tokens=30 latency_ms=0"]
+    assert lines == [
+        f"ask request={REQUEST_ID} outcome=done status=200 input_tokens=120 "
+        "output_tokens=30 latency_ms=0"
+    ]
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "distinctive" not in captured.err
@@ -526,7 +532,7 @@ def test_client_disconnect_closes_the_model_stream_and_logs_once() -> None:
         assert closed.wait(5)
 
     assert len(lines) == 1
-    assert lines[0].startswith("ask outcome=")
+    assert lines[0].startswith(f"ask request={REQUEST_ID} outcome=")
 
 
 # --- the local command -------------------------------------------------------------------------
@@ -561,3 +567,8 @@ def test_listen_port_prefers_the_adapter_setting() -> None:
     assert production_app.listen_port({"PORT": "9000"}) == 9000
     assert production_app.listen_port({"AWS_LWA_PORT": "9001", "PORT": "9000"}) == 9001
     assert production_app.listen_port({"PORT": "nope"}) == 8080
+
+
+def test_the_logged_request_id_is_only_ever_the_generated_one() -> None:
+    assert production_app.safe_request_id(REQUEST_ID) == REQUEST_ID
+    assert production_app.safe_request_id("injected outcome=done") == "-"

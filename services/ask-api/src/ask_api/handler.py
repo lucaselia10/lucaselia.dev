@@ -1,11 +1,10 @@
-"""Lambda entry point for the career portfolio POST /ask route.
+"""The exact-answer JSON handler for the local development server's default mode.
 
 Career questions are answered from the packaged career index when they match a
-supported fact or a follow-up to one. History is validated and then used only
-for that follow-up. It is not sent to a model, and the response is one JSON
-document. Job comparison is accepted and left unimplemented. Exact facts are
-resolved before any grounding provider is constructed. Each invocation receives
-its own request ID.
+supported fact or a follow-up to one. Anything else gets the fixed unsupported
+answer. History is validated and used only for that follow-up. Nothing here calls
+a model; model answers stream from ask_api.production_app and local model mode.
+Job comparison is accepted and left unimplemented. Each call gets its own request ID.
 """
 
 from __future__ import annotations
@@ -16,31 +15,16 @@ import uuid
 
 from ask_api.ask_request import RequestError, string_key_dict, validated_ask_request
 from ask_api.exact_answers import FALLBACK_ANSWER, answer_career_question, suggested_questions
-from ask_api.grounding import CareerAnswerer, PublicCareerAnswer
-from ask_api.grounding_factory import configured_grounding_service
 from ask_api.index_loader import CareerIndexError
 
 JOB_COMPARISON_ANSWER = (
     "Job comparison is not implemented. No model was called and no career material was compared."
 )
 INDEX_UNAVAILABLE = "The career index is unavailable."
-ASSISTANT_UNAVAILABLE = "The career assistant is temporarily unavailable."
 
 
-def handler(
-    event: dict[str, object],
-    context: object,
-    *,
-    grounded_service: CareerAnswerer | None = None,
-) -> dict[str, object]:
-    """Validate a POST /ask event and answer supported career questions.
-
-    Production calls omit ``grounded_service``. Exact facts are returned before
-    any retriever or model runs. With grounding disabled, an unmatched question
-    keeps today's unsupported answer. A configured provider returns that answer
-    when retrieval or generation succeeds without supporting evidence. Provider
-    and configuration failures return HTTP 503 and do not describe the failure.
-    """
+def handler(event: dict[str, object], context: object) -> dict[str, object]:
+    """Validate a POST /ask event and answer supported career questions from the index."""
     del context
     request_id = _request_id(event)
     try:
@@ -72,39 +56,6 @@ def handler(
         )
 
     if exact is None:
-        if grounded_service is None:
-            try:
-                grounded_service = configured_grounding_service()
-            except Exception:
-                return _json_response(
-                    503,
-                    {"message": ASSISTANT_UNAVAILABLE, "requestId": request_id},
-                )
-        return _answer_without_exact_match(question, grounded_service, request_id)
-
-    return _json_response(
-        200,
-        {
-            "answer": exact.answer,
-            "citations": [citation.as_dict() for citation in exact.citations],
-            "suggestedQuestions": list(exact.suggested_questions),
-            "requestId": request_id,
-        },
-    )
-
-
-def _answer_without_exact_match(
-    question: str,
-    grounded_service: CareerAnswerer | None,
-    request_id: str,
-) -> dict[str, object]:
-    """Answer an unmatched question without confusing failure and missing evidence.
-
-    No configured provider preserves the current unsupported answer. A provider
-    that returns an answer, including the validated insufficient-evidence
-    sentence, is HTTP 200. Any exception from that provider is HTTP 503.
-    """
-    if grounded_service is None:
         return _json_response(
             200,
             {
@@ -114,23 +65,13 @@ def _answer_without_exact_match(
                 "requestId": request_id,
             },
         )
-    try:
-        grounded = grounded_service.answer(question)
-    except Exception:
-        return _json_response(
-            503,
-            {"message": ASSISTANT_UNAVAILABLE, "requestId": request_id},
-        )
-    return _career_answer_response(grounded, request_id)
 
-
-def _career_answer_response(answer: PublicCareerAnswer, request_id: str) -> dict[str, object]:
     return _json_response(
         200,
         {
-            "answer": answer.answer,
-            "citations": [citation.as_dict() for citation in answer.citations],
-            "suggestedQuestions": list(answer.suggested_questions),
+            "answer": exact.answer,
+            "citations": [citation.as_dict() for citation in exact.citations],
+            "suggestedQuestions": list(exact.suggested_questions),
             "requestId": request_id,
         },
     )

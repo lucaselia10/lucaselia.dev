@@ -1,6 +1,6 @@
 # ADR-005: Answer open-ended career questions by retrieving approved sections
 
-**Status:** Accepted. The retrieval architecture below remains accepted. For later work, [ADR-006](006-model-conversation-and-streaming.md) supersedes the rules that every exact fact bypasses the model and that the first grounded version does not stream or keep conversation memory.  
+**Status:** Superseded by [ADR-009](009-production-assistant.md) for retrieval, publication, ingestion, and packaging: production passes the full approved evidence package to the model, the Knowledge Base, S3 Vectors, publisher, and Bedrock grounding code were never deployed and were removed in Slice 2, Round 2, and the Lambda asset no longer bundles boto3. The citation-trust rule, Lumen Harbor's exclusion from evidence, and the split between sanitized failures and insufficient evidence still apply. Earlier, [ADR-006](006-model-conversation-and-streaming.md) superseded the rules that every exact fact bypasses the model and that the first grounded version does not stream or keep conversation memory.  
 **Date:** September 29, 2026
 
 ## Context

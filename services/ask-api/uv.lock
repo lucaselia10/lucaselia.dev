@@ -48,12 +48,12 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
-    { name = "boto3" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "boto3-stubs", extra = ["bedrock-agent-runtime", "bedrock-runtime"] },
+    { name = "boto3" },
+    { name = "boto3-stubs", extra = ["bedrock-runtime"] },
     { name = "botocore", extra = ["crt"] },
     { name = "pyright" },
     { name = "pytest" },
@@ -61,14 +61,12 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "anthropic", specifier = ">=1.13.0" },
-    { name = "boto3", specifier = ">=1.43.105" },
-]
+requires-dist = [{ name = "anthropic", specifier = ">=1.13.0" }]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "boto3-stubs", extras = ["bedrock-agent-runtime", "bedrock-runtime"], specifier = ">=1.43.105" },
+    { name = "boto3", specifier = ">=1.43.105" },
+    { name = "boto3-stubs", extras = ["bedrock-runtime"], specifier = ">=1.43.105" },
     { name = "botocore", extras = ["crt"], specifier = ">=1.43.105" },
     { name = "pyright", specifier = ">=1.1.414" },
     { name = "pytest", specifier = ">=9.1.1" },
@@ -135,9 +133,6 @@ wheels = [
 ]
 
 [package.optional-dependencies]
-bedrock-agent-runtime = [
-    { name = "mypy-boto3-bedrock-agent-runtime" },
-]
 bedrock-runtime = [
     { name = "mypy-boto3-bedrock-runtime" },
 ]
@@ -337,15 +332,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d3/59/322338183ecda247fb5d1763a6cbe46eff7222eaeebafd9fa65d4bf5cb11/jmespath-1.1.0.tar.gz", hash = "sha256:472c87d80f36026ae83c6ddd0f1d05d4e510134ed462851fd5f754c8c3cbb88d", size = 27377, upload-time = "2026-01-22T16:35:26.279Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/14/2f/967ba146e6d58cf6a652da73885f52fc68001525b4197effc174321d70b4/jmespath-1.1.0-py3-none-any.whl", hash = "sha256:a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64", size = 20419, upload-time = "2026-01-22T16:35:24.919Z" },
-]
-
-[[package]]
-name = "mypy-boto3-bedrock-agent-runtime"
-version = "1.43.105"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/71/03/8109b4f84e19c827bc2fd79be0636a59c01ae7d7bcb4ba7852a41bcf2de6/mypy_boto3_bedrock_agent_runtime-1.43.105.tar.gz", hash = "sha256:82d945befae779576b6dbe44472b3781eeccfa879dfef568d1156fb6dafe2182", size = 47070, upload-time = "2026-09-29T22:34:11.556Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/dd/25/e4e233569e3ac7148bd49102c2d5e32133c5b4ae2cf64d9b3892e8021bd8/mypy_boto3_bedrock_agent_runtime-1.43.105-py3-none-any.whl", hash = "sha256:80d3df5bce1ea8638b16db645318e3ba7dcc2d21264f2b2254c77b2355b8b925", size = 56694, upload-time = "2026-09-29T22:34:09.429Z" },
 ]
 
 [[package]]

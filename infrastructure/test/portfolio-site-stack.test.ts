@@ -1,40 +1,43 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { App, Stack } from "aws-cdk-lib";
-import { Match, Template } from "aws-cdk-lib/assertions";
+import { readFileSync } from "node:fs";
+import { App } from "aws-cdk-lib";
+import { Match } from "aws-cdk-lib/assertions";
 import { describe, expect, it } from "vitest";
+import { PortfolioAssistantStack } from "../lib/portfolio-assistant-stack";
 import {
+  API_RATE_LIMITED_BODY,
   ASSET_CACHE_CONTROL,
   PAGE_CACHE_CONTROL,
   PortfolioSiteStack,
-  SITE_REGION,
   VIEWER_REQUEST_SOURCE,
 } from "../lib/portfolio-site-stack";
 import { CONTENT_SECURITY_POLICY, PERMISSIONS_POLICY } from "../lib/site-headers";
+import { TEST_ENV, ZONE_ID, preparedAssets, siteDirectory, synthesizeStacks } from "./fixtures";
 
-const ZONE_ID = "Z0123456789TESTZONE";
 const CACHING_OPTIMIZED = "658327ea-f89d-4fab-a63d-7e88639e58f6";
+const CACHING_DISABLED = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad";
 
-function siteDirectory(): string {
-  const directory = mkdtempSync(join(tmpdir(), "site-build-"));
-  mkdirSync(join(directory, "_astro"));
-  writeFileSync(join(directory, "index.html"), "<!doctype html><title>Site</title>");
-  writeFileSync(join(directory, "_astro", "index.abc123.css"), "body{}");
-  return directory;
+const { site: stack, siteTemplate: template } = synthesizeStacks();
+
+interface Behavior {
+  PathPattern?: string;
+  TargetOriginId: string;
+  FunctionAssociations?: unknown[];
+  ResponseHeadersPolicyId?: unknown;
+  [key: string]: unknown;
 }
 
-function synth(): { stack: Stack; template: Template } {
-  const app = new App();
-  const stack = new PortfolioSiteStack(app, "PortfolioSiteStack", {
-    hostedZoneId: ZONE_ID,
-    siteDirectory: siteDirectory(),
-    env: { account: "123456789012", region: SITE_REGION },
-  });
-  return { stack, template: Template.fromStack(stack) };
+function distributionConfig(): {
+  DefaultCacheBehavior: Behavior;
+  CacheBehaviors: Behavior[];
+  Origins: Array<Record<string, unknown>>;
+  WebACLId: unknown;
+} {
+  return (
+    Object.values(template.findResources("AWS::CloudFront::Distribution"))[0]?.Properties as {
+      DistributionConfig: ReturnType<typeof distributionConfig>;
+    }
+  ).DistributionConfig;
 }
-
-const { stack, template } = synth();
 
 describe("PortfolioSiteStack", () => {
   it("lives in us-east-1, where CloudFront certificates must be", () => {
@@ -71,7 +74,8 @@ describe("PortfolioSiteStack", () => {
         ]),
       },
     });
-    template.resourceCountIs("AWS::CloudFront::OriginAccessControl", 1);
+    // Two OACs: this one for S3, and the Lambda one for /api/* (tested below).
+    template.resourceCountIs("AWS::CloudFront::OriginAccessControl", 2);
     template.hasResourceProperties("AWS::CloudFront::OriginAccessControl", {
       OriginAccessControlConfig: Match.objectLike({
         OriginAccessControlOriginType: "s3",
@@ -106,13 +110,14 @@ describe("PortfolioSiteStack", () => {
             Compress: true,
             CachePolicyId: CACHING_OPTIMIZED,
           }),
+          Match.objectLike({ PathPattern: "/api/*" }),
         ],
-        Origins: [
+        Origins: Match.arrayWith([
           Match.objectLike({
             OriginAccessControlId: Match.anyValue(),
             S3OriginConfig: { OriginAccessIdentity: "" },
           }),
-        ],
+        ]),
       }),
     });
     const distribution = Object.values(template.findResources("AWS::CloudFront::Distribution"))[0];
@@ -150,26 +155,22 @@ describe("PortfolioSiteStack", () => {
     });
   });
 
-  it("attaches the viewer-request function to both behaviors", () => {
+  it("attaches the viewer-request function to the page behaviors only, not /api/*", () => {
     template.resourceCountIs("AWS::CloudFront::Function", 1);
     template.hasResourceProperties("AWS::CloudFront::Function", {
       FunctionCode: readFileSync(VIEWER_REQUEST_SOURCE, "utf8"),
       FunctionConfig: Match.objectLike({ Runtime: "cloudfront-js-2.0" }),
     });
-    const config = (
-      Object.values(template.findResources("AWS::CloudFront::Distribution"))[0]?.Properties as {
-        DistributionConfig: {
-          DefaultCacheBehavior: { FunctionAssociations: unknown[] };
-          CacheBehaviors: Array<{ FunctionAssociations: unknown[] }>;
-        };
-      }
-    ).DistributionConfig;
+    const config = distributionConfig();
     const functionId = Object.keys(template.findResources("AWS::CloudFront::Function"))[0];
-    for (const behavior of [config.DefaultCacheBehavior, ...config.CacheBehaviors]) {
+    const pages = config.CacheBehaviors.filter((behavior) => behavior.PathPattern !== "/api/*");
+    for (const behavior of [config.DefaultCacheBehavior, ...pages]) {
       expect(behavior.FunctionAssociations).toEqual([
         { EventType: "viewer-request", FunctionARN: { "Fn::GetAtt": [functionId, "FunctionARN"] } },
       ]);
     }
+    const api = config.CacheBehaviors.find((behavior) => behavior.PathPattern === "/api/*");
+    expect(api?.FunctionAssociations).toBeUndefined();
   });
 
   it("sends the security headers on every response", () => {
@@ -194,18 +195,13 @@ describe("PortfolioSiteStack", () => {
     expect(CONTENT_SECURITY_POLICY).toContain("frame-ancestors 'none'");
     expect(CONTENT_SECURITY_POLICY).toContain("script-src 'none'");
     expect(CONTENT_SECURITY_POLICY).toContain("default-src 'none'");
-    const config = (
-      Object.values(template.findResources("AWS::CloudFront::Distribution"))[0]?.Properties as {
-        DistributionConfig: {
-          DefaultCacheBehavior: { ResponseHeadersPolicyId: unknown };
-          CacheBehaviors: Array<{ ResponseHeadersPolicyId: unknown }>;
-        };
-      }
-    ).DistributionConfig;
+    const config = distributionConfig();
     expect(config.DefaultCacheBehavior.ResponseHeadersPolicyId).toBeDefined();
-    expect(config.CacheBehaviors[0]?.ResponseHeadersPolicyId).toEqual(
-      config.DefaultCacheBehavior.ResponseHeadersPolicyId,
-    );
+    for (const behavior of config.CacheBehaviors) {
+      expect(behavior.ResponseHeadersPolicyId).toEqual(
+        config.DefaultCacheBehavior.ResponseHeadersPolicyId,
+      );
+    }
   });
 
   it("returns /404.html with status 404 for missing objects", () => {
@@ -249,7 +245,7 @@ describe("PortfolioSiteStack", () => {
     expect(ASSET_CACHE_CONTROL).toBe("public, max-age=31536000, immutable");
   });
 
-  it("contains none of the ask API resources and is tagged like the ask stack", () => {
+  it("contains none of the retired ask API resources and is tagged as the site", () => {
     for (const type of [
       "AWS::ApiGatewayV2::Api",
       "AWS::Bedrock::KnowledgeBase",
@@ -270,12 +266,153 @@ describe("PortfolioSiteStack", () => {
   });
 
   it("rejects a malformed hosted zone id", () => {
+    const app = new App();
+    const assistant = new PortfolioAssistantStack(app, "Assistant", {
+      ...preparedAssets(),
+      env: TEST_ENV,
+    });
     expect(
       () =>
-        new PortfolioSiteStack(new App(), "Bad", {
+        new PortfolioSiteStack(app, "Bad", {
           hostedZoneId: "not-a-zone",
           siteDirectory: siteDirectory(),
+          askFunctionUrl: assistant.functionUrl,
+          env: TEST_ENV,
         }),
     ).toThrow(/hosted zone id/);
+  });
+});
+
+describe("PortfolioSiteStack /api/*", () => {
+  const api = (): Behavior => {
+    const found = distributionConfig().CacheBehaviors.find(
+      (behavior) => behavior.PathPattern === "/api/*",
+    );
+    expect(found).toBeDefined();
+    return found as Behavior;
+  };
+
+  it("sends /api/* to the function URL origin: no cache, all methods, HTTPS only", () => {
+    expect(api()).toMatchObject({
+      ViewerProtocolPolicy: "https-only",
+      AllowedMethods: ["GET", "HEAD", "OPTIONS", "PUT", "PATCH", "POST", "DELETE"],
+      CachePolicyId: CACHING_DISABLED,
+      Compress: false,
+    });
+    const origin = distributionConfig().Origins.find((item) => item.Id === api().TargetOriginId);
+    expect(origin?.ConnectionAttempts).toBe(1);
+    expect((origin?.CustomOriginConfig as { OriginReadTimeout: number }).OriginReadTimeout).toBe(
+      40,
+    );
+    expect(origin?.OriginAccessControlId).toBeDefined();
+    expect(JSON.stringify(origin?.DomainName)).toContain("FunctionUrl");
+  });
+
+  it("uses a Lambda OAC that always signs with SigV4", () => {
+    template.resourceCountIs("AWS::CloudFront::OriginAccessControl", 2);
+    template.hasResourceProperties("AWS::CloudFront::OriginAccessControl", {
+      OriginAccessControlConfig: Match.objectLike({
+        OriginAccessControlOriginType: "lambda",
+        SigningBehavior: "always",
+        SigningProtocol: "sigv4",
+      }),
+    });
+  });
+
+  it("forwards only Content-Type, Accept, and the body hash: no cookies or query strings", () => {
+    template.resourceCountIs("AWS::CloudFront::OriginRequestPolicy", 1);
+    template.hasResourceProperties("AWS::CloudFront::OriginRequestPolicy", {
+      OriginRequestPolicyConfig: Match.objectLike({
+        HeadersConfig: {
+          HeaderBehavior: "whitelist",
+          Headers: ["Content-Type", "Accept", "x-amz-content-sha256"],
+        },
+        CookiesConfig: { CookieBehavior: "none" },
+        QueryStringsConfig: { QueryStringBehavior: "none" },
+      }),
+    });
+    const policyId = Object.keys(template.findResources("AWS::CloudFront::OriginRequestPolicy"))[0];
+    expect(api().OriginRequestPolicyId).toEqual({ Ref: policyId });
+  });
+
+  it("lets CloudFront invoke the function only on behalf of this distribution", () => {
+    const permissions = Object.values(template.findResources("AWS::Lambda::Permission")).map(
+      (resource) => resource.Properties as Record<string, unknown>,
+    );
+    expect(permissions.map((permission) => permission.Action).sort()).toEqual([
+      "lambda:InvokeFunction",
+      "lambda:InvokeFunctionUrl",
+    ]);
+    const distributionId = Object.keys(template.findResources("AWS::CloudFront::Distribution"))[0];
+    for (const permission of permissions) {
+      expect(permission.Principal).toBe("cloudfront.amazonaws.com");
+      const sourceArn = JSON.stringify(permission.SourceArn);
+      expect(sourceArn).toContain(":cloudfront::");
+      expect(sourceArn).toContain(":distribution/");
+      expect(sourceArn).toContain(`"Ref":"${distributionId}"`);
+      expect(JSON.stringify(permission.FunctionName)).toContain("Fn::ImportValue");
+    }
+  });
+
+  it("rate-limits /api/ per IP: 20 in 10 minutes, blocked with a JSON 429", () => {
+    template.resourceCountIs("AWS::WAFv2::WebACL", 1);
+    template.hasResourceProperties("AWS::WAFv2::WebACL", {
+      Scope: "CLOUDFRONT",
+      DefaultAction: { Allow: {} },
+      CustomResponseBodies: {
+        "rate-limited": { ContentType: "APPLICATION_JSON", Content: API_RATE_LIMITED_BODY },
+      },
+      Rules: [
+        {
+          Name: "api-rate-limit",
+          Priority: 0,
+          Action: {
+            Block: { CustomResponse: { ResponseCode: 429, CustomResponseBodyKey: "rate-limited" } },
+          },
+          Statement: {
+            RateBasedStatement: {
+              Limit: 20,
+              EvaluationWindowSec: 600,
+              AggregateKeyType: "IP",
+              ScopeDownStatement: {
+                ByteMatchStatement: {
+                  FieldToMatch: { UriPath: {} },
+                  PositionalConstraint: "STARTS_WITH",
+                  SearchString: "/api/",
+                  TextTransformations: [{ Priority: 0, Type: "NONE" }],
+                },
+              },
+            },
+          },
+          VisibilityConfig: Match.objectLike({ SampledRequestsEnabled: false }),
+        },
+      ],
+    });
+    expect(JSON.parse(API_RATE_LIMITED_BODY)).toEqual({
+      message: "Too many questions in a short time. Please wait a few minutes.",
+      code: "rate_limited",
+    });
+    const aclId = Object.keys(template.findResources("AWS::WAFv2::WebACL"))[0];
+    expect(distributionConfig().WebACLId).toEqual({ "Fn::GetAtt": [aclId, "Arn"] });
+    expect(JSON.stringify(template.toJSON())).not.toContain("ManagedRuleGroupStatement");
+  });
+
+  it("leaves the page behaviors exactly as they were", () => {
+    const config = distributionConfig();
+    expect(config.DefaultCacheBehavior).toMatchObject({
+      ViewerProtocolPolicy: "redirect-to-https",
+      AllowedMethods: ["GET", "HEAD"],
+      Compress: true,
+    });
+    expect(config.DefaultCacheBehavior.OriginRequestPolicyId).toBeUndefined();
+    const assets = config.CacheBehaviors.find((behavior) => behavior.PathPattern === "/_astro/*");
+    expect(assets).toMatchObject({
+      AllowedMethods: ["GET", "HEAD"],
+      CachePolicyId: CACHING_OPTIMIZED,
+      Compress: true,
+    });
+    expect(assets?.OriginRequestPolicyId).toBeUndefined();
+    expect(config.DefaultCacheBehavior.TargetOriginId).toEqual(assets?.TargetOriginId);
+    expect(api().TargetOriginId).not.toEqual(assets?.TargetOriginId);
   });
 });

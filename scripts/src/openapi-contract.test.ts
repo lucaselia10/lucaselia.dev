@@ -26,7 +26,8 @@ describe("ask API contract", () => {
     expect(document.paths["/ask"].post.responses["200"]).toBeTruthy();
     expect(document.paths["/ask"].post.responses["400"]).toBeTruthy();
     expect(document.paths["/ask"].post.responses["500"]).toBeTruthy();
-    expect(document.paths["/ask"].post.responses["503"]).toBeTruthy();
+    // The exact-answer handler calls no model, so it has no dependency failure to report.
+    expect(document.paths["/ask"].post.responses["503"]).toBeUndefined();
     expect(document.components.schemas.AskRequest.required).toEqual(["question", "mode"]);
     expect(document.components.schemas.AskRequest.properties.mode.enum).toEqual([
       "career_question",

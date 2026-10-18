@@ -25,7 +25,7 @@ README.md and docs/design-history.md are reference; read the parts you need.
 
 ## Hard guardrails
 
-- Never bootstrap CDK, deploy, upload, run `pnpm publish:retrieval`, start ingestion,
+- Never bootstrap CDK, deploy, upload, start ingestion,
   or make any AWS/Bedrock call.
 - Never start `pnpm dev:api:model`, `pnpm dev:api:model:bedrock`, or `pnpm dev:web:model`.
   Fixture mode (`LOCAL_MODEL_CONVERSATION=fixture`) calls no model.
@@ -45,12 +45,12 @@ README.md and docs/design-history.md are reference; read the parts you need.
 
 ## Deploys
 
-Deploys are user-run. The static site (`PortfolioSiteStack`, ADR-007) deploys with
+Deploys are user-run. The one CDK app (`infrastructure/bin/site.ts`) has two stacks in us-east-1,
+`PortfolioAssistantStack` and `PortfolioSiteStack` (ADR-007, ADR-009). They deploy together with
 `pnpm build:site` and then `SITE_HOSTED_ZONE_ID=… AWS_PROFILE=<deploy profile> pnpm run deploy:site`
 from the user's terminal (the script passes `-c siteHostedZoneId`). Claude never runs `cdk`, `aws`,
-`pnpm deploy:site`, `pnpm bootstrap:site`, `pnpm diff:site`, or `pnpm destroy:site`.
-The site app (`infrastructure/bin/site.ts`) can only synthesize `PortfolioSiteStack`; the default
-app (`bin/app.ts`, the ask API) refuses site context.
+`pnpm deploy:site`, `pnpm bootstrap:site`, `pnpm diff:site`, `pnpm destroy:site`, or `pnpm synth`.
+Tests synthesize in-process. The Anthropic key secret is created by the user; the stack only names it.
 
 ## Model providers
 
@@ -85,6 +85,6 @@ private/public-blocklist.txt.
 ## Layout
 
 apps/web (Astro + React assistant island) · services/ask-api (Python Lambda, dev_server.py,
-local\_\* model-mode modules) · infrastructure (CDK: ask app synth only, site app) · content/public
+local\_\* model-mode modules, production_app) · infrastructure (CDK: assistant and site stacks) · content/public
 (reviewed Markdown) · scripts (validate, index, build-retrieval, stage-lambda, check-public) ·
 schemas · tests/evaluation

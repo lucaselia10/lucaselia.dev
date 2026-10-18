@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -43,12 +43,13 @@ describe("Lambda asset staging", () => {
 
     const staged = relativeAssetPaths(destination);
     for (const required of lambdaAssetRequiredPaths) {
-      expect(staged).toContain(required);
+      expect(staged).toContain(`ask_api/${required}`);
     }
-    expect(readFileSync(join(destination, "data", "career-index.json"))).toEqual(
+    expect(readFileSync(join(destination, "ask_api", "data", "career-index.json"))).toEqual(
       readFileSync(index),
     );
-    expectStagedEvidence(staged, destination, evidence.manifest);
+    expectStagedEvidence(staged, join(destination, "ask_api"), evidence.manifest, "ask_api/");
+    expectExecutableHandler(destination);
     expectPinnedRuntimeDependencies(staged);
     expect(staged.join("\n")).not.toContain("stale_sdk");
     expect(staged).not.toContain("pytest.py");
@@ -68,19 +69,14 @@ describe("Lambda asset staging", () => {
     expect(existsSync(join(repoRoot, "services", "ask-api", "dev_server.py"))).toBe(true);
     expect(joined).not.toContain("dev_server.py");
     expect(joined).not.toContain("retrieval/");
-    expect(joined).not.toContain("retrieval_publisher");
-    expect(
-      existsSync(join(repoRoot, "services", "ask-api", "src", "retrieval_publisher", "cli.py")),
-    ).toBe(true);
-    expect(staged).toContain("handler.py");
-    expect(staged).toContain("bedrock_retriever.py");
-    expect(staged).toContain("bedrock_generator.py");
-    expect(staged).toContain("grounding_factory.py");
-    expect(staged).toContain("data/career-index.json");
-    expect(staged).toContain("production_app.py");
-    expect(staged).toContain("model_providers/anthropic_api.py");
+    expect(joined).not.toContain("grounding");
+    expect(staged).toContain("ask_api/handler.py");
+    expect(staged).toContain("ask_api/data/career-index.json");
+    expect(staged).toContain("ask_api/production_app.py");
+    expect(staged).toContain("ask_api/model_providers/anthropic_api.py");
     expect(staged).toContain("anthropic/__init__.py");
-    expectStagedEvidence(staged, destination, evidence.manifest);
+    expectStagedEvidence(staged, join(destination, "ask_api"), evidence.manifest, "ask_api/");
+    expectExecutableHandler(destination);
     expectPinnedRuntimeDependencies(staged);
     expectAbsentFromAsset(staged);
   });
@@ -110,9 +106,15 @@ describe("Lambda asset staging", () => {
 
     copyEvidencePackage(evidence.directory, evidence.manifest, packageDir);
 
-    expectStagedEvidence(relativeAssetPaths(packageDir), packageDir, evidence.manifest);
+    expectStagedEvidence(relativeAssetPaths(packageDir), packageDir, evidence.manifest, "");
   });
 });
+
+function expectExecutableHandler(destination: string): void {
+  const handler = join(destination, "run.sh");
+  expect(readFileSync(handler, "utf8")).toContain("exec python3 -m ask_api.production_app");
+  expect(statSync(handler).mode & 0o111).toBe(0o111);
+}
 
 function writeEvidence(root: string): { directory: string; manifest: string } {
   const directory = join(root, "retrieval");
@@ -125,20 +127,27 @@ function writeEvidence(root: string): { directory: string; manifest: string } {
   return { directory, manifest };
 }
 
-function expectStagedEvidence(staged: string[], destination: string, manifest: string): void {
-  const evidence = staged.filter((path) => path.startsWith("data/evidence/"));
+function expectStagedEvidence(
+  staged: string[],
+  packageDir: string,
+  manifest: string,
+  prefix: string,
+): void {
+  const evidence = staged.filter((path) => path.startsWith(`${prefix}data/evidence/`));
   expect(evidence).toEqual([
-    "data/evidence/aws-sde-ii--role-description.txt",
-    "data/evidence/aws-sde-ii--role-description.txt.metadata.json",
+    `${prefix}data/evidence/aws-sde-ii--role-description.txt`,
+    `${prefix}data/evidence/aws-sde-ii--role-description.txt.metadata.json`,
   ]);
-  expect(readFileSync(join(destination, "data", "evidence-manifest.json"))).toEqual(
+  expect(readFileSync(join(packageDir, "data", "evidence-manifest.json"))).toEqual(
     readFileSync(manifest),
   );
 }
 
 function expectPinnedRuntimeDependencies(staged: string[]): void {
-  expect(staged).toContain("boto3/__init__.py");
-  expect(staged).toContain("botocore/__init__.py");
+  // The Python 3.13 runtime provides boto3 (ADR-009).
+  for (const provided of ["boto3", "botocore", "s3transfer"]) {
+    expect(staged.some((path) => path.split("/")[0] === provided)).toBe(false);
+  }
   for (const distribution of lockedRuntimeDistributions()) {
     expect(staged).toContain(distribution);
   }
@@ -157,7 +166,6 @@ function expectAbsentFromAsset(staged: string[]): void {
     "dist",
     "site-packages",
     "node_modules",
-    "retrieval_publisher",
   ]) {
     expect(segments).not.toContain(prohibited);
   }

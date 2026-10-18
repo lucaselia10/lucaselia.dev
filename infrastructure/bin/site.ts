@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Entry for the static site only. Used by `pnpm run deploy:site` through --app; the default
-// cdk.json app (bin/app.ts) is the ask API and refuses site context.
+// The project's CDK app: PortfolioAssistantStack and PortfolioSiteStack. Deploys are user-run
+// (`pnpm run deploy:site`), which pass -c siteHostedZoneId.
 import { createSiteApp } from "../lib/site-app";
 
 createSiteApp();

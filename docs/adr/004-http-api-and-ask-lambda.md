@@ -1,6 +1,6 @@
 # ADR-004: Expose POST /ask through an HTTP API and one Lambda
 
-**Status:** Accepted  
+**Status:** Superseded by [ADR-009](009-production-assistant.md). The HTTP API was never deployed and was removed from the code in Slice 2, Round 2; the ask path is a function URL behind CloudFront.  
 **Date:** September 28, 2026
 
 ## Context

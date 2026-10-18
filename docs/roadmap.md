@@ -20,7 +20,7 @@ The next two implementation slices are ordered. Slice 1 is implemented locally a
 - Exact answers from the bundled career index.
 - The synthesized HTTP API, Lambda, Knowledge Base, S3 Vectors index, private source bucket, and split IAM roles.
 - Retrieve-then-generate behavior, sanitized failures, and retrieval artifact generation.
-- `pnpm publish:retrieval`, with a read-only default and injected-client tests.
+- `pnpm publish:retrieval`, with a read-only default and injected-client tests (later removed with the Knowledge Base path, ADR-009).
 - ADRs 001 through 005 and the evaluation case file.
 
 **Exclusions:** no Git remote, no push, no CDK bootstrap, no deployment, no upload, no ingestion, and no production visual design.
@@ -124,7 +124,7 @@ Direct local evidence is not Knowledge Base retrieval. Production retrieval stay
 
 ## Slice 2 — Production streaming architecture and deployment integration
 
-**Status:** design round done; nothing is implemented. [ADR-009](adr/009-production-assistant.md) (Proposed) records the owner's decisions and the recommended transport: a Lambda function URL in `RESPONSE_STREAM` mode with the Lambda Web Adapter and a small Python app, behind the site's CloudFront at `/api/*` with OAC and WAF. It uses the Anthropic API, the full evidence package instead of a Knowledge Base, and moves to `us-east-1`. The [production assistant specification](design/production-assistant.md) has the NDJSON contract, limits, failure modes, threat and cost model, the five implementation rounds, and the user-run steps. Implementation starts after the owner answers the open questions there and accepts the ADR.
+**Status:** Rounds 1 and 2 of 5 are built; nothing is deployed. [ADR-009](adr/009-production-assistant.md) (Proposed) records the decisions: a Lambda function URL in `RESPONSE_STREAM` mode with the Lambda Web Adapter and a small Python app, behind the site's CloudFront at `/api/*` with OAC and a WAF rate limit, using the Anthropic API and the full evidence package, in `us-east-1`. Round 1 built the production app; Round 2 built `PortfolioAssistantStack`, the `/api/*` behavior, and WAF, and removed the never-deployed ask stack, Knowledge Base, and publisher. Round 3 turns on the assistant UI and its CSP. The [production assistant specification](design/production-assistant.md) has the contract, limits, failure modes, cost model, runbook, and remaining rounds.
 
 **Objective:** Carry the validated conversational experience through the production AWS request path.
 

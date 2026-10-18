@@ -1,6 +1,6 @@
 # Production assistant
 
-Decisions locked by the owner on October 17, 2026: the transport, `us-east-1` with a new `PortfolioAssistantStack`, the standard-library server, no reserved concurrency (the account limit of 10 is the cap), a $10 Anthropic workspace limit, a $15 AWS budget alarm created by hand, and the limits below. WAF is not decided; every WAF item here is conditional on it. Round 1 (the production app) is built.
+Decisions locked by the owner on October 17, 2026: the transport, `us-east-1` with a new `PortfolioAssistantStack`, the standard-library server, no reserved concurrency (the account limit of 10 is the cap), a $10 Anthropic workspace limit, a $15 AWS budget alarm created by hand, and the limits below. WAF was added on October 18, 2026. Rounds 1 (the production app) and 2 (the infrastructure, synthesized only) are built.
 
 This is the specification for putting the career assistant live on `https://lucaselia.dev` with streamed answers. The decisions and the transport comparison are in [ADR-009](../adr/009-production-assistant.md) (Proposed). The local behavior it carries into production is in [system design](../system-design.md#local-model-conversation) and [ADR-008](../adr/008-anthropic-api-for-model-answers.md).
 
@@ -20,7 +20,7 @@ Nothing here is built or deployed. Prices and limits cite AWS and Anthropic docu
 flowchart LR
   B["Browser<br/>React assistant island"] -->|"GET pages"| CF["CloudFront<br/>lucaselia.dev"]
   B -->|"POST /api/ask<br/>NDJSON stream back"| CF
-  CF --> WAF["AWS WAF, if added<br/>per-IP rate rule on /api/*"]
+  CF --> WAF["AWS WAF<br/>per-IP rate rule on /api/"]
   CF -->|"default behavior<br/>OAC"| S3["S3 site bucket"]
   CF -->|"/api/* behavior<br/>OAC, SigV4, no cache"| FURL["Lambda function URL<br/>AWS_IAM, RESPONSE_STREAM"]
   FURL --> LWA["Lambda Web Adapter<br/>response_stream"]
@@ -52,12 +52,12 @@ Stacks, both in `us-east-1`, in the site CDK app:
 ```mermaid
 sequenceDiagram
   participant B as Browser
-  participant CF as CloudFront (+ WAF, if added)
+  participant CF as CloudFront + WAF
   participant L as Lambda (LWA + app)
   participant A as Anthropic API
   B->>B: body = JSON.stringify(...), sha256 = hex(SHA-256(body bytes))
   B->>CF: POST /api/ask, Content-Type, Accept: application/x-ndjson, x-amz-content-sha256
-  CF->>CF: WAF rate rule per IP, if added
+  CF->>CF: WAF rate rule (per IP)
   CF->>L: SigV4-signed request (OAC)
   L->>L: validate body, limits, paused flag
   L->>A: messages stream (system, evidence, history, question)
@@ -70,10 +70,10 @@ sequenceDiagram
 ```
 
 1. **Body and hash.** The island serializes the body once, encodes it as UTF-8, and hashes those bytes with `crypto.subtle.digest("SHA-256", …)`. It sends the same bytes with `x-amz-content-sha256: <lowercase hex>`. OAC requires the hash for `POST` to a function URL ([OAC for function URLs](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-lambda.html)). The request is same-origin, so no preflight runs, and `credentials: "omit"` stays.
-2. **Edge checks.** If WAF is added, it counts the request against the per-IP rule. CloudFront signs it with SigV4 for the function URL and forwards only `Content-Type`, `Accept`, and `x-amz-content-sha256`.
+2. **Edge checks.** WAF counts the request against the per-IP rule. CloudFront signs it with SigV4 for the function URL and forwards only `Content-Type`, `Accept`, and `x-amz-content-sha256`.
 3. **Function checks.** The function validates the body, applies the limits below, and checks the in-memory paused flag before calling the model.
 4. **Streaming.** The answer stream is the local one, with the same deltas, holdback, deadline, and completion. Each event is written and flushed as one NDJSON line.
-5. **Outcome logging.** The function logs one line per request: `ask outcome=… status=… input_tokens=… output_tokens=… latency_ms=…`. Nothing else is logged, not even the request id.
+5. **Outcome logging.** The function logs one line per request: `ask request=… outcome=… status=… input_tokens=… output_tokens=… latency_ms=…`. Nothing else is logged.
 
 ### Browser request
 
@@ -103,12 +103,12 @@ Streamed text has not passed the final citation check. A `validation` error afte
 
 **Responses before the stream starts** are JSON `{ "message", "requestId", "code"? }`:
 
-| Status | When                                                                                                                                                                 | `code`                              |
-| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| 400    | Invalid JSON, unknown fields, empty question, a question over 500 characters, a mode other than `career_question`, or any route or method other than `POST /api/ask` | —                                   |
-| 413    | Body over 16 KB                                                                                                                                                      | —                                   |
-| 429    | The model API rate-limited the request (no spend-limit code). If WAF is added, its block action also sends a JSON 429 with `rate_limited`.                           | `busy` (or `rate_limited` from WAF) |
-| 503    | Paused after a spend-limit or overload error from the model API (for 5 minutes per environment), or the key, client, or model stream is unavailable                  | `paused` or `unavailable`           |
+| Status | When                                                                                                                                                                 | `code`                    |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| 400    | Invalid JSON, unknown fields, empty question, a question over 500 characters, a mode other than `career_question`, or any route or method other than `POST /api/ask` | —                         |
+| 413    | Body over 16 KB                                                                                                                                                      | —                         |
+| 429    | The WAF rule blocked the IP (`rate_limited`, a custom JSON body from WAF), or the model API rate-limited the request without a spend-limit code (`busy`).            | `rate_limited` or `busy`  |
+| 503    | Paused after a spend-limit or overload error from the model API (for 5 minutes per environment), or the key, client, or model stream is unavailable                  | `paused` or `unavailable` |
 
 `GET /ready` answers the adapter's readiness check with `200 {"status":"ready"}`. CloudFront does not route it, so it is not public.
 
@@ -131,7 +131,7 @@ The API never returns 403 or 404 on purpose. The distribution maps those statuse
 | Concurrency                         | No reserved concurrency; the account limit of 10 is the cap   | Lambda account limit          | 5 reserved (ADR-004) |
 | CloudFront origin response timeout  | 40 s; connection attempts 1                                   | CloudFront                    | —                    |
 | Browser timeout                     | 45 s total                                                    | Client                        | 31 s                 |
-| Per-IP rate                         | Not decided; candidate 20 requests per 10 minutes on `/api/*` | WAF, if added                 | —                    |
+| Per-IP rate                         | 20 requests per 10 minutes on URI paths starting with `/api/` | WAF                           | —                    |
 | Model spend                         | $10 per month (owner-set workspace limit)                     | Anthropic                     | —                    |
 | Pause after spend limit or overload | 5 minutes per execution environment                           | Function                      | —                    |
 
@@ -147,7 +147,7 @@ The browser timeout is longer than the server deadline, so the server's own `tim
 | Model or network failure mid-stream                      | Deltas, then `error` `unavailable` or `interrupted`, or the stream closes                                                                                                                  | The partial text is marked incomplete, with the message and Retry.                                       |
 | Model slow                                               | `error` `timeout` at 31 s, or the browser aborts at 45 s                                                                                                                                   | "The request timed out. Please try again." with Retry.                                                   |
 | Visitor cancels                                          | The client aborts. The function may keep running until its deadline.                                                                                                                       | "The request was cancelled."                                                                             |
-| Rate limited by WAF (if added)                           | 429 JSON `rate_limited`                                                                                                                                                                    | "Too many questions in a short time. Please wait a few minutes." No automatic retry.                     |
+| Rate limited by WAF                                      | 429 JSON `rate_limited`                                                                                                                                                                    | "Too many questions in a short time. Please wait a few minutes." No automatic retry.                     |
 | Account concurrency limit reached, or the kill switch on | 429 from the function URL, through CloudFront (unverified body)                                                                                                                            | The same busy message.                                                                                   |
 | Model spend limit reached, or the model API overloaded   | Before any text: 503 `paused`. Mid-stream: `error` `paused`. Either way the function pauses that environment for 5 minutes, and requests there get 503 `paused` without calling the model. | "The assistant is paused for now. The career pages are still here." The input is disabled for the visit. |
 | Model API rate limit (429 without a spend-limit code)    | Before any text: 429 `busy`, after the SDK's one retry. Mid-stream: `error` `busy`. No pause.                                                                                              | "The career assistant is busy. Please try again in a minute." with Retry.                                |
@@ -181,11 +181,11 @@ A production build with the assistant on (checked locally on October 17, 2026) e
 | Threat                                                 | Control                                                                                                                                                     | Residual                                                                                                                                |
 | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | Direct calls to the function URL, bypassing CloudFront | `AWS_IAM` auth type, and OAC with a resource policy limited to this distribution's ARN                                                                      | None known                                                                                                                              |
-| Scripted question floods (cost)                        | Input and history caps, `max_tokens` 500, the $10 workspace spend limit, the 5-minute pause, the account concurrency limit, and a WAF per-IP rule if added  | Without WAF, one client can exhaust the $10 within hours and pause the assistant for the month                                          |
-| Request floods (AWS bill)                              | The $15 budget alarm and the kill switch, and WAF blocks at the edge if added                                                                               | Pay-as-you-go CloudFront request fees (and WAF's, if added) are not capped (see cost model)                                             |
+| Scripted question floods (cost)                        | WAF per-IP rate rule, input and history caps, `max_tokens` 500, the $10 workspace spend limit, the 5-minute pause, and the account concurrency limit        | A persistent or distributed client can exhaust the $10 and pause the assistant for the month                                            |
+| Request floods (AWS bill)                              | WAF blocks at the edge, the $15 budget alarm, and the kill switch                                                                                           | Pay-as-you-go CloudFront and WAF request fees are not capped (see cost model)                                                           |
 | Prompt injection in the question or history            | History is context, never evidence. Citations come only from the package after identifier matching. The model has no tools.                                 | The model may still be talked into off-topic wording. `answer_style` and the fixed refusal limit that, and nothing is logged or stored. |
 | Leaking the API key                                    | Secrets Manager, read at cold start by a role allowed only that secret's `GetSecretValue`. Never in environment variables, logs, errors, or the repository. | Anyone who can read the secret in the account                                                                                           |
-| Leaking visitor content                                | No body, question, answer, or prompt logging. Outcome codes and token counts only. No storage.                                                              | CloudFront and WAF metrics carry no bodies. Standard logs stay off (ADR-007).                                                           |
+| Leaking visitor content                                | No body, question, answer, or prompt logging. Request id, outcome, and token counts only. WAF sampled requests off. No storage.                             | CloudFront and WAF metrics carry no bodies. Standard logs stay off (ADR-007).                                                           |
 | Clickjacking or script injection on the site           | `frame-ancestors 'none'`. `script-src` limited to self and two fixed hashes.                                                                                | —                                                                                                                                       |
 | Stale or fabricated citations                          | Citation URLs copied from the bundled package, which deploys with the pages it cites                                                                        | —                                                                                                                                       |
 
@@ -211,12 +211,12 @@ The $10 cap covers about 3,000 typical questions, or about 1,100 at the worst ca
 
 ### Monthly
 
-| Scenario                                            | Anthropic         | AWS                                                          | Notes                                                                                                                                                                                                                                                                                                         |
-| --------------------------------------------------- | ----------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Normal (about 300 questions)                        | about $1          | about $0.60 without WAF; about $7.60 with WAF                | Secrets Manager $0.40, alarms about $0.20, plus WAF $6 if added. Lambda, CloudFront, and request fees stay inside free tiers.                                                                                                                                                                                 |
-| One persistent abuser                               | $10 (cap reached) | about $0.60 (or $7.60 with WAF)                              | Without a per-IP limit, one client can send requests as fast as the 10 concurrent executions allow, and reach the cap in hours. With the candidate WAF rule, one IP sends at most 2,880 a day, which still reaches the cap in under a day at worst-case size. The assistant is paused until the month resets. |
-| Distributed abuse, saturating concurrency all month | $10 (cap reached) | up to about $81 Lambda + request fees, plus the baseline     | 10 concurrent executions (the account limit) × 30 days × 256 MB ≈ 6.5 million GB-seconds, about $81 after the free tier. After the cap, the pause makes each request fast, so request count, not duration, dominates. The $15 budget alarm fires long before that; the response is the kill switch.           |
-| Request flood (L7)                                  | $10 at most       | baseline + about $1.00 per million requests ($1.60 with WAF) | CloudFront at $1.00 per million, plus WAF at $0.60 per million if added. Blocked requests are still billed on pay-as-you-go. **Not capped.** The budget alarm detects it, and the response is the kill switch.                                                                                                |
+| Scenario                                            | Anthropic         | AWS                                                      | Notes                                                                                                                                                                                                                                                                                               |
+| --------------------------------------------------- | ----------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Normal (about 300 questions)                        | about $1          | about $7.60                                              | WAF $6 (web ACL $5, one rule $1), Secrets Manager $0.40, plus CloudWatch Logs pennies. Lambda, CloudFront, and request fees stay inside free tiers.                                                                                                                                                 |
+| One persistent abuser                               | $10 (cap reached) | about $7.60                                              | At 20 requests per 10 minutes, one IP sends at most 2,880 a day, enough to reach the cap in under a day at worst-case size. The assistant is paused until the month resets.                                                                                                                         |
+| Distributed abuse, saturating concurrency all month | $10 (cap reached) | up to about $81 Lambda + request fees, plus the baseline | 10 concurrent executions (the account limit) × 30 days × 256 MB ≈ 6.5 million GB-seconds, about $81 after the free tier. After the cap, the pause makes each request fast, so request count, not duration, dominates. The $15 budget alarm fires long before that; the response is the kill switch. |
+| Request flood (L7)                                  | $10 at most       | about $7.60 + about $1.60 per million requests           | CloudFront at $1.00 per million plus WAF at $0.60 per million. Blocked requests are still billed on pay-as-you-go. **Not capped.** The $15 budget alarm detects it, and the response is the kill switch.                                                                                            |
 
 The flat-rate CloudFront plans have no overage charges, and requests blocked by WAF never count toward their allowance. The Free plan includes 1 million requests, WAF with 5 rules, and IP rate limiting ([flat-rate plans](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/flat-rate-pricing-plan.html)). If the Free plan accepts this distribution, it removes both the $6 WAF baseline and the flood exposure. Whether it does is open, because its feature table lists custom response header rules, which the site's CSP uses, only on the Business tier.
 
@@ -226,8 +226,8 @@ The AWS Budget is $15 a month, created by the owner by hand, not in the stack. I
 
 ## Observability without content
 
-- **Function logs.** One line per request: `ask outcome=… status=… input_tokens=… output_tokens=… latency_ms=…`. Outcomes are `done`, `error_<code>`, `disconnected`, `invalid`, `unsupported`, `too_large`, `paused`, `busy`, or `unavailable`. Setup failures log `ask setup_error error=<class name>` only. Log retention is 30 days.
-- **Metrics and alarms.** Lambda `Invocations`, `Throttles`, `Errors`, and `Duration`, with an alarm when invocations exceed an hourly threshold and an alarm on any throttles. If WAF is added, its blocked-request metrics come from the web ACL.
+- **Function logs.** One line per request: `ask request=… outcome=… status=… input_tokens=… output_tokens=… latency_ms=…`. Outcomes are `done`, `error_<code>`, `disconnected`, `invalid`, `unsupported`, `too_large`, `paused`, `busy`, or `unavailable`. Setup failures log `ask setup_error error=<class name>` only. Log retention is 14 days.
+- **Metrics and alarms.** Lambda's built-in `Invocations`, `Throttles`, `Errors`, and `Duration` metrics and WAF's blocked-request metrics are available in CloudWatch. No CloudWatch alarms are in the stack; the $15 AWS budget is the notification.
 - **No access logs.** No CloudFront standard or real-time logs (ADR-007), and no WAF full logging, because those would record request details.
 
 ## Implementation plan
@@ -250,32 +250,16 @@ Each round is reviewed before the next starts. Rounds 1 to 3 make no AWS calls a
   - Streaming over a real loopback socket, with the first delta read before the provider is allowed to finish.
   - Every status (200, 400, 413, 429, 503), limit enforcement, and the pause and its expiry, including a pause mid-stream.
   - Secret caching and failure without echo, and the Lambda refusal of an environment key.
-  - The log line's exact content, and the absence of question, answer, history, and request id.
+  - The log line's exact content, and the absence of question, answer, and history.
   - Client disconnect closing the model stream.
   - Real-SDK classification of spend-limit, tier-cap, overload, and rate-limit errors.
 - **Tests.** Scripts: staging of the SDK and evidence, and refusal without evidence.
 
-### Round 2: infrastructure (synth only)
+### Round 2: infrastructure (synth only), done
 
-- **Scope.**
-  - `PortfolioAssistantStack` in `us-east-1`: function, URL (`AWS_IAM`, `RESPONSE_STREAM`), adapter layer from a pinned and checksummed binary (`AWS_LWA_INVOKE_MODE=response_stream`, `AWS_LWA_READINESS_CHECK_PATH=/ready`, `ASK_PROVIDER=anthropic`, `ANTHROPIC_SECRET_NAME`), no reserved concurrency, log retention, the secret by name from deploy context, and alarms.
-  - Confirm from AWS documentation that reserved concurrency 0, the kill switch, is accepted at an account concurrency limit of 10.
-  - In `PortfolioSiteStack`: the `/api/*` behavior (OAC, `CachingDisabled`, all methods, a custom origin request policy with no cookies, response timeout 40 s, connection attempts 1, no viewer function), and the Lambda permission for the distribution. Add the WAF web ACL only if the owner decides on it.
-  - Remove `CareerPortfolioStack`, the HTTP API, the Bedrock grounding resources, and `retrieval_publisher`, and move the CI synth to the site app.
-  - Status notes on ADR-004 to ADR-008.
-- **Acceptance.**
-  - `pnpm synth:site`-equivalent synthesis succeeds in tests with placeholder context.
-  - `pnpm test` and `pnpm check:public` pass.
-  - No account id, ARN with an account, or secret value appears in tracked files or the template.
-- **Tests.** CDK assertions for:
-  - The function URL auth type and invoke mode, and no public invoke permission.
-  - The OAC and permission `SourceArn`.
-  - Behavior order and settings, and the origin request policy (no cookies, no `Host`).
-  - No reserved concurrency on the function.
-  - If WAF is added: the rule scope, limit, and window.
-  - The secret read policy limited to one secret name pattern.
-  - Retention and alarms.
-  - That the site app still cannot synthesize anything else.
+- **Built.** `PortfolioAssistantStack` and the `/api/*`, OAC, permission, and WAF additions to `PortfolioSiteStack`, as recorded in [ADR-009](../adr/009-production-assistant.md#round-2-implementation). `pnpm prepare:web-adapter` fetches and verifies the pinned adapter binary. The ask app, its HTTP API, the Knowledge Base resources, the publisher, and the Bedrock grounding code are removed. CI synthesizes both stacks with a placeholder hosted zone id.
+- **Tests.** CDK assertions for the function URL's stream mode and IAM auth, the Lambda OAC, both permissions scoped to the distribution, the `/api/*` behavior and its origin request policy, the WAF rule (limit, window, scope-down, custom 429), the secret permission scope, no layer ARN from another account, no reserved concurrency, 14-day log retention, and unchanged page behaviors and headers. Offline tests for the adapter fetch (digest and checksum failures, caching) and for staging (the `ask_api/` layout, `run.sh`, no boto3).
+- **Not done here:** CloudWatch alarms (the budget alarm notifies instead) and turning the assistant UI on (Round 3).
 
 ### Round 3: site
 
@@ -300,7 +284,7 @@ Each round is reviewed before the next starts. Rounds 1 to 3 make no AWS calls a
 - **Acceptance.**
   - The function URL called directly is refused.
   - `/api/ask` streams progressively through CloudFront: deltas arrive over time, observed with a streaming client and in the browser.
-  - If WAF is added, exceeding its limit gives the JSON 429.
+  - Exceeding the WAF limit (21 requests in 10 minutes from one IP) gives the JSON 429.
   - The kill switch drill (reserved concurrency 0, then restored) shows the busy message, then recovers.
   - CSP shows no violations in the browser console.
   - The cold-start init duration and first-byte time are recorded.
@@ -315,17 +299,75 @@ Each round is reviewed before the next starts. Rounds 1 to 3 make no AWS calls a
   - No token or cost line appears.
 - **Records.** Outcomes go in `tests/evaluation/README.md` without question text. Token counts and cost come from the Anthropic Console usage page, not the UI. Then ADR-009 becomes Accepted and the Slice 2 gate closes.
 
+## Runbook
+
+The owner runs every command, from their own terminal, with the deploy profile. `<deploy profile>` and the hosted zone id are placeholders; neither belongs in the repository. Region is `us-east-1` throughout.
+
+### 1. Create the secret (once)
+
+The value is read from a prompt into a private temporary file, so it never appears in the command line, the process list, or shell history:
+
+```bash
+umask 077
+read -rs ANTHROPIC_KEY_INPUT
+printf '%s' "$ANTHROPIC_KEY_INPUT" > "$TMPDIR/anthropic-key"
+unset ANTHROPIC_KEY_INPUT
+aws secretsmanager create-secret --region us-east-1 --profile <deploy profile> \
+  --name career-portfolio/anthropic-api-key \
+  --description "Anthropic API key for the lucaselia.dev assistant" \
+  --secret-string "file://$TMPDIR/anthropic-key" --query Name --output text
+rm -P "$TMPDIR/anthropic-key"
+```
+
+`--query Name` prints only the secret's name, never its value. To rotate later, use `aws secretsmanager put-secret-value` the same way; the function picks up the new key on its next cold start. Alternatively create it in the console as plaintext. A different name works if it is passed as `-c anthropicSecretName=<name>` (add it to the deploy script's context).
+
+### 2. Review the change
+
+```bash
+pnpm build:site
+SITE_HOSTED_ZONE_ID=<zone id> AWS_PROFILE=<deploy profile> pnpm run diff:site
+```
+
+The diff covers both stacks. Expect a new `PortfolioAssistantStack` and, in `PortfolioSiteStack`, the `/api/*` behavior, a second OAC, an origin request policy, two Lambda permissions, and the WAF web ACL. Page behaviors and headers should not change.
+
+### 3. Deploy
+
+```bash
+pnpm build:site
+SITE_HOSTED_ZONE_ID=<zone id> AWS_PROFILE=<deploy profile> pnpm run deploy:site
+```
+
+One command deploys both stacks, assistant first. The `AskFunctionName` output is needed for the kill switch. Smoke tests are Round 4.
+
+### 4. Kill switch (no redeploy)
+
+```bash
+aws lambda put-function-concurrency --region us-east-1 --profile <deploy profile> \
+  --function-name <AskFunctionName> --reserved-concurrent-executions 0
+```
+
+Reserved concurrency 0 stops every invocation until it is removed ([reserved concurrency](https://docs.aws.amazon.com/lambda/latest/dg/configuration-concurrency.html)); `/api/ask` then fails while the site keeps working. The API accepts 0 as its minimum value, but the documentation does not say whether the 100-unreserved rule refuses it on an account whose limit is 10 ([PutFunctionConcurrency](https://docs.aws.amazon.com/lambda/latest/api/API_PutFunctionConcurrency.html)). If it is refused (`InvalidParameterValueException`), use the fallback: disable the API key in the Anthropic Console (the app then answers 503 `unavailable` and calls nothing billable), or add a WAF rule in the console that blocks URI paths starting with `/api/` (the stack shows drift until the next deploy). Undo the kill switch with:
+
+```bash
+aws lambda delete-function-concurrency --region us-east-1 --profile <deploy profile> \
+  --function-name <AskFunctionName>
+```
+
+### 5. Undo a deploy
+
+Redeploy an earlier commit with step 3. To remove the assistant entirely, revert to a commit before Round 2 and deploy, or run `pnpm run destroy:site` (this removes the site too). The secret is not managed by the stack and stays until `aws secretsmanager delete-secret` is run.
+
 ## User-run steps, in order
 
 Exact commands are written in Rounds 2 and 4. Claude does not run any of these.
 
-1. **Decide WAF**, the remaining open item below.
+1. **Confirm** the Round 2 outputs below are what you want to deploy (the assistant UI stays off until Round 3).
 2. **Anthropic Console.**
    - Create a dedicated workspace for the portfolio, because the default workspace cannot have limits ([workspace limits](https://platform.claude.com/docs/en/api/rate-limits#setting-lower-limits-for-workspaces)).
    - Set its monthly spend limit to $10.
    - Create an API key in that workspace.
 3. **Lambda concurrency.** The account limit is 10, so the function has no reserved concurrency ([reserved concurrency](https://docs.aws.amazon.com/lambda/latest/dg/configuration-concurrency.html)). Nothing to request unless the kill switch turns out not to be allowed (Round 2 checks).
-4. **Secret.** Create the secret in Secrets Manager in `us-east-1` from the console (not the shell), and paste the key. Keep only the secret's name for the deploy context.
+4. **Secret.** Create `career-portfolio/anthropic-api-key` in `us-east-1` ([runbook step 1](#1-create-the-secret-once)).
 5. **AWS Budget.** Create a $15 monthly budget by hand, with email alerts at 50%, 80%, and 100% actual and 100% forecast. It is not in the stack.
 6. **Bootstrap.** Confirm CDK bootstrap in `us-east-1` exists. It does already, for the site.
 7. **Build and deploy.**
@@ -339,7 +381,4 @@ Exact commands are written in Rounds 2 and 4. Claude does not run any of these.
 
 ## Open questions for the owner
 
-- **Rate limiting.** Pay-as-you-go WAF at about $6 a month, the flat-rate Free plan if it accepts the CSP headers policy, or no WAF, relying on the spend cap, the pause, the account concurrency limit, and the budget alarm?
-- **Per-IP limit**, if WAF is added: 20 requests per 10 minutes?
-
-Decided on October 17, 2026: the transport, `us-east-1` with a separate `PortfolioAssistantStack`, the standard-library server, no reserved concurrency, the limits, and the budgets (a $10 Anthropic workspace limit and a $15 AWS budget created by hand).
+None for Rounds 1 and 2. Decided: the transport, `us-east-1` with a separate `PortfolioAssistantStack`, the standard-library server, no reserved concurrency, the limits, the budgets (a $10 Anthropic workspace limit and a $15 AWS budget created by hand), and WAF (20 requests per 10 minutes per IP on `/api/`).

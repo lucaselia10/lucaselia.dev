@@ -15,12 +15,13 @@ Production differences from the development server:
 - A spend-limit or overload error from the provider pauses this environment for
   PAUSE_SECONDS: requests get 503 "paused" without calling the model.
 - The Anthropic key comes from Secrets Manager (see ask_api.secret_key).
-- One log line per request: outcome, status, token counts, and latency. Nothing else.
+- One log line per request: request id, outcome, status, token counts, and latency.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import sys
 import threading
 import time
@@ -169,7 +170,7 @@ class ProductionApp:
         request_id = self.new_request_id()
 
         def reply(status: int, outcome: str, message: str, code: str | None = None) -> JsonReply:
-            self._log_request(outcome, status, None, started)
+            self._log_request(request_id, outcome, status, None, started)
             return json_reply(status, message, request_id, code)
 
         if method != "POST" or path != ASK_PATH:
@@ -214,17 +215,24 @@ class ProductionApp:
         def finished(outcome: str, usage: object) -> None:
             if outcome == "error_paused":
                 self.gate.pause()
-            self._log_request(outcome, 200, usage, started)
+            self._log_request(request_id, outcome, 200, usage, started)
 
         stream: Iterator[dict[str, object]] = chain([first], events)
         return StreamReply(without_development_fields(observe(stream, finished)))
 
-    def _log_request(self, outcome: str, status: int, usage: object, started: float) -> None:
-        """The one line per request. Never the question, answer, prompt, history, or body."""
+    def _log_request(
+        self, request_id: str, outcome: str, status: int, usage: object, started: float
+    ) -> None:
+        """The one line per request. Never the question, answer, prompt, history, or body.
+
+        The request id is the random UUID the visitor sees in an error, so a reported
+        failure can be matched to its line.
+        """
         input_tokens, output_tokens = token_counts(usage)
         latency_ms = max(0, round((self.clock() - started) * 1000))
         self.log(
-            f"ask outcome={outcome} status={status} input_tokens={input_tokens} "
+            f"ask request={safe_request_id(request_id)} outcome={outcome} status={status} "
+            f"input_tokens={input_tokens} "
             f"output_tokens={output_tokens} latency_ms={latency_ms}"
         )
 
@@ -343,6 +351,14 @@ def create_app(
 def load_bundled_evidence() -> EvidencePackage:
     """The evidence package staged next to this module (ask_api/data)."""
     return load_evidence_package(EVIDENCE_DIRECTORY, EVIDENCE_MANIFEST)
+
+
+_REQUEST_ID = re.compile(r"^[0-9a-f-]{1,64}$")
+
+
+def safe_request_id(value: str) -> str:
+    """The generated request id, or "-" if it is not one (it never comes from the request)."""
+    return value if _REQUEST_ID.match(value) else "-"
 
 
 def listen_port(environ: Mapping[str, str]) -> int:

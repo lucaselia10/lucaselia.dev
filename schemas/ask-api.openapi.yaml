@@ -3,23 +3,14 @@ info:
   title: Career Portfolio Ask API
   version: 0.1.0
   description: >
-    Contract for the stateless POST /ask endpoint. A career question is
-    answered from the generated career index when it matches one of four exact
-    fact families: current role, employment history, education, or technologies.
-    An unsupported career question returns a fixed fallback and no citations
-    when no grounding provider is configured, when retrieval returns no chunks,
-    or when generation returns the validated insufficient-evidence answer.
-    A configured grounding dependency failure returns 503. Job comparison is
-    accepted and is not implemented. history is validated and
-    is used only to resolve a follow-up from the packaged career index.
-    It is not sent to a model. The deployed response is one JSON document;
-    this contract does not stream. The local development server can return
-    newline-delimited events when Accept includes application/x-ndjson and
-    LOCAL_MODEL_CONVERSATION is set. That local response is not this schema.
-    Exact answers do not call a model.
-    When grounding is enabled, an unmatched question uses Knowledge Base
-    Retrieve and Nova Converse. The same generated index is bundled with the Lambda, so a content
-    change requires a new deployment. Each invocation has its own requestId.
+    Contract for the exact-answer JSON handler that the local development
+    server serves at POST /ask. A career question is answered from the
+    generated career index when it matches a supported fact family or a
+    follow-up to one; anything else returns a fixed unsupported answer and no
+    citations. No model is called. Job comparison is accepted and is not
+    implemented. Each call has its own requestId. The production assistant is
+    a different contract: POST /api/ask streams newline-delimited events, as
+    specified in docs/design/production-assistant.md (ADR-009).
 paths:
   /ask:
     post:
@@ -110,21 +101,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "503":
-          description: >
-            A configured grounding provider failed. This covers retrieval
-            unavailability, generation unavailability, malformed generated
-            output, an ungrounded answer, and an unexpected grounding exception.
-            The message is fixed and includes the invocation requestId. It does
-            not include exception text, provider output, prompts, retrieved
-            passages, AWS identifiers, paths, or implementation details.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-              example:
-                message: The career assistant is temporarily unavailable.
-                requestId: gateway-request-503
 components:
   schemas:
     AskRequest:

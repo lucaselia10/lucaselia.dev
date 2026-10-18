@@ -100,8 +100,8 @@ def _secrets_manager_client() -> SecretsClient:
     from botocore.config import Config
 
     config = Config(connect_timeout=2, read_timeout=5, retries={"total_max_attempts": 2})
-    # boto3-stubs is installed without the secretsmanager extra, so the client is reached the
-    # way grounding_factory does it; the Protocol above is the one call this module makes.
+    # boto3 comes from the Lambda runtime, not the asset, and boto3-stubs is installed without
+    # the secretsmanager extra; the Protocol above is the one call this module makes.
     module: object = __import__("boto3")
     create = getattr(module, "client")
     return cast(SecretsClient, create("secretsmanager", config=config))

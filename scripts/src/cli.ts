@@ -2,6 +2,7 @@ import { writeRetrievalArtifacts } from "./build-retrieval.js";
 import { checkPublicFiles, readBlocklist } from "./check-public.js";
 import {
   askApiPackageDir,
+  webAdapterLayerPath,
   canonicalCareerIndexPath,
   careerIndexCopyPaths,
   lambdaAssetPath,
@@ -9,6 +10,7 @@ import {
   retrievalManifestPath,
 } from "./paths.js";
 import { copyEvidencePackage, stageLambdaAsset } from "./stage-lambda-asset.js";
+import { WEB_ADAPTER_VERSION, prepareWebAdapterLayer } from "./web-adapter.js";
 import { synchronizeCareerIndex, validateCorpus, writeCareerIndex } from "./validate-content.js";
 
 const command = process.argv[2];
@@ -50,6 +52,17 @@ if (command === "validate") {
     console.error(`Copied the evidence package into ${askApiPackageDir}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Evidence sync failed.";
+    console.error(message);
+    process.exit(1);
+  }
+} else if (command === "fetch-web-adapter") {
+  try {
+    const result = await prepareWebAdapterLayer(webAdapterLayerPath);
+    console.error(
+      `Lambda Web Adapter ${WEB_ADAPTER_VERSION} layer ${result} at ${webAdapterLayerPath}`,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Lambda Web Adapter fetch failed.";
     console.error(message);
     process.exit(1);
   }

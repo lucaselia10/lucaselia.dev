@@ -23,4 +23,6 @@ export const careerIndexCopyPaths = [webCareerIndexPath, pythonCareerIndexPath] 
 export const openApiPath = join(repoRoot, "schemas", "ask-api.openapi.yaml");
 export const askApiProjectDir = join(repoRoot, "services", "ask-api");
 export const askApiPackageDir = join(askApiProjectDir, "src", "ask_api");
+export const askApiHandlerScriptPath = join(askApiProjectDir, "lambda", "run.sh");
+export const webAdapterLayerPath = join(repoRoot, "infrastructure", "asset", "web-adapter-layer");
 export const lambdaAssetPath = join(repoRoot, "infrastructure", "asset", "ask-api");

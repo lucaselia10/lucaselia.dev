@@ -58,9 +58,12 @@ jobs:
       - name: Build the site
         run: pnpm build
 
+      - name: Fetch the pinned Lambda Web Adapter
+        # Anonymous read of the public image; fails closed unless the manifest digest, layer
+        # digests, and binary SHA-256 all match the pins in scripts/src/web-adapter.ts.
+        run: pnpm prepare:web-adapter
+
       - name: Synthesize CDK
-        # Runner images set AWS_DEFAULT_REGION=us-east-1. AWS_REGION takes precedence in the
-        # CDK CLI, so the ask app synthesizes for its required region.
-        env:
-          AWS_REGION: us-west-2
+        # Both stacks of the site app, with a placeholder hosted zone id. No AWS credentials;
+        # nothing is looked up or deployed.
         run: pnpm synth

@@ -8,17 +8,26 @@ const assetDirectory = join(import.meta.dirname, "..", "asset", "ask-api");
 describe("ask Lambda asset dependencies", () => {
   it("ships the production app, the Anthropic SDK, and the evidence package", () => {
     for (const path of [
-      "production_app.py",
-      "stream_http.py",
-      "secret_key.py",
-      join("model_providers", "anthropic_api.py"),
+      "ask_api/production_app.py",
+      "ask_api/stream_http.py",
+      "ask_api/secret_key.py",
+      join("ask_api", "model_providers", "anthropic_api.py"),
       join("anthropic", "__init__.py"),
       join("httpx2", "__init__.py"),
-      join("data", "evidence-manifest.json"),
+      join("ask_api", "data", "evidence-manifest.json"),
+      "run.sh",
     ]) {
       expect(existsSync(join(assetDirectory, path)), path).toBe(true);
     }
-    expect(readdirSync(join(assetDirectory, "data", "evidence")).length).toBeGreaterThan(0);
+    expect(readdirSync(join(assetDirectory, "ask_api", "data", "evidence")).length).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it("leaves boto3 to the runtime", () => {
+    for (const provided of ["boto3", "botocore", "s3transfer"]) {
+      expect(existsSync(join(assetDirectory, provided)), provided).toBe(false);
+    }
   });
 
   it("leaves development tools out", () => {

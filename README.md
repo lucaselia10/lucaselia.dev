@@ -14,12 +14,12 @@ This is the source for my career portfolio. The site is a static record of my ro
 
 ## Status
 
-| Part                 | State                                                                                                            |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Static site          | Live at [lucaselia.dev](https://lucaselia.dev), without the assistant.                                           |
-| Assistant            | Runs locally. A live local evaluation on Claude Haiku 4.5 has been run and recorded.                             |
-| Production assistant | Planned. The ask API and retrieval resources are synthesized in CDK but not deployed.                            |
-| CI                   | GitHub Actions runs format, lint, type, test, content, build, synth, and public-safety checks. It never deploys. |
+| Part                 | State                                                                                                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Static site          | Live at [lucaselia.dev](https://lucaselia.dev), without the assistant.                                                                                              |
+| Assistant            | Runs locally. A live local evaluation on Claude Haiku 4.5 has been run and recorded.                                                                                |
+| Production assistant | Built and synthesized, not deployed: a streaming Lambda function URL behind CloudFront `/api/*` with OAC and WAF ([ADR-009](docs/adr/009-production-assistant.md)). |
+| CI                   | GitHub Actions runs format, lint, type, test, content, build, synth, and public-safety checks. It never deploys.                                                    |
 
 The plan is in the [roadmap](docs/roadmap.md).
 
@@ -32,7 +32,7 @@ flowchart LR
   build --> evidence[Evidence package and career index]
   site --> cf["CloudFront + S3<br/>lucaselia.dev"]
   visitor[Visitor] --> cf
-  island[React assistant island] -. local only .-> api[Python ask API]
+  island[React assistant island] -. "/api/* (not deployed yet)" .-> api[Python ask API]
   api --> evidence
   api --> provider{Model provider}
   provider --> anthropic[Anthropic API]
@@ -40,8 +40,8 @@ flowchart LR
 ```
 
 - `apps/web`: Astro with static output. React is used only for the assistant island.
-- `services/ask-api`: the Python 3.13 handler for `POST /ask`, the local development server, and the model providers.
-- `infrastructure`: two CDK apps. One synthesizes the ask API and grounding resources; the other deploys only the static site.
+- `services/ask-api`: the Python 3.13 production app for `POST /api/ask` (run behind the Lambda Web Adapter), the local development server, and the model providers.
+- `infrastructure`: one CDK app with two stacks in `us-east-1`: `PortfolioAssistantStack` (the ask function) and `PortfolioSiteStack` (the site, CloudFront, WAF, and the `/api/*` route to the function).
 - `content/public`: the reviewed Markdown that the site, the career index, and the evidence package are all built from.
 
 The full picture is in [system design](docs/system-design.md). Decisions are in the [ADR index](docs/adr/README.md), and how the design evolved is in [design history](docs/design-history.md).
@@ -62,19 +62,20 @@ pnpm install
 uv sync --directory services/ask-api
 ```
 
-| Command             | What it does                                                                                          |
-| ------------------- | ----------------------------------------------------------------------------------------------------- |
-| `pnpm dev:api`      | Build the career index and start the local ask server on `127.0.0.1:8787`.                            |
-| `pnpm dev:web`      | Start the site on `127.0.0.1:4321`, pointed at the local ask server.                                  |
-| `pnpm dev:api:prod` | Run the production ask app as Lambda runs it, on `127.0.0.1:8080/api/ask`, with the fixture provider. |
-| `pnpm build:site`   | Build the production site (no assistant) into `apps/web/dist`.                                        |
-| `pnpm format:check` | Check formatting (Prettier and Ruff).                                                                 |
-| `pnpm lint`         | Lint TypeScript (ESLint) and Python (Ruff).                                                           |
-| `pnpm typecheck`    | Type-check the web app, CDK, scripts, and Python (pyright).                                           |
-| `pnpm test`         | Run Vitest and Pytest.                                                                                |
-| `pnpm test:browser` | Run Playwright and axe against the development and production builds.                                 |
-| `pnpm check:public` | Scan the files that would be published for account IDs, home paths, internal hosts, and keys.         |
-| `pnpm synth`        | Synthesize the ask API CDK app. It does not call AWS.                                                 |
+| Command                    | What it does                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `pnpm dev:api`             | Build the career index and start the local ask server on `127.0.0.1:8787`.                                    |
+| `pnpm dev:web`             | Start the site on `127.0.0.1:4321`, pointed at the local ask server.                                          |
+| `pnpm dev:api:prod`        | Run the production ask app as Lambda runs it, on `127.0.0.1:8080/api/ask`, with the fixture provider.         |
+| `pnpm build:site`          | Build the production site (no assistant) into `apps/web/dist`.                                                |
+| `pnpm format:check`        | Check formatting (Prettier and Ruff).                                                                         |
+| `pnpm lint`                | Lint TypeScript (ESLint) and Python (Ruff).                                                                   |
+| `pnpm typecheck`           | Type-check the web app, CDK, scripts, and Python (pyright).                                                   |
+| `pnpm test`                | Run Vitest and Pytest.                                                                                        |
+| `pnpm test:browser`        | Run Playwright and axe against the development and production builds.                                         |
+| `pnpm check:public`        | Scan the files that would be published for account IDs, home paths, internal hosts, and keys.                 |
+| `pnpm synth`               | Build the production site and synthesize both stacks with a placeholder hosted zone id. It does not call AWS. |
+| `pnpm prepare:web-adapter` | Fetch and verify the pinned Lambda Web Adapter binary for the function's layer.                               |
 
 Model mode is opt-in and makes paid calls:
 
@@ -97,12 +98,12 @@ Content rules (front matter schema, visibility, and the assistant flag) are in [
 
 ```text
 apps/web/            Astro site and the React assistant island
-services/ask-api/    Python ask API, local dev server, model providers, retrieval publisher
-infrastructure/      CDK apps: ask API (synth only) and the static site
+services/ask-api/    Python ask API: production app, local dev server, model providers
+infrastructure/      CDK app: the assistant stack and the site stack
 content/public/      Reviewed public Markdown
 packages/content/    Shared citation routes and heading slugs
 schemas/             Public-document JSON Schema and the OpenAPI contract
-scripts/             Validation, indexing, retrieval build, Lambda staging, check:public
+scripts/             Validation, indexing, evidence build, Lambda staging, adapter fetch, check:public
 tests/evaluation/    Evaluation cases and recorded live runs
 docs/                System design, roadmap, ADRs, product spec, design history
 ```

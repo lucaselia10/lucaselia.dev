@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,8 +5,7 @@ import { App } from "aws-cdk-lib";
 import { describe, expect, it } from "vitest";
 import { productionBuildProblems } from "../lib/site-build-check";
 import { createSiteApp } from "../lib/site-app";
-
-const infrastructureDirectory = join(import.meta.dirname, "..");
+import { preparedAssets } from "./fixtures";
 
 function productionBuild(extra: Record<string, string> = {}): string {
   const directory = mkdtempSync(join(tmpdir(), "site-prod-"));
@@ -29,21 +27,52 @@ function productionBuild(extra: Record<string, string> = {}): string {
 }
 
 describe("site CDK app", () => {
-  it("synthesizes exactly one stack, PortfolioSiteStack", () => {
+  it("synthesizes the assistant and site stacks, both in us-east-1", () => {
     const app = createSiteApp({
       app: new App({ context: { siteHostedZoneId: "Z0123456789TESTZONE" } }),
       siteDirectory: productionBuild(),
+      ...preparedAssets(),
     });
     const assembly = app.synth();
 
-    expect(assembly.stacks.map((stack) => stack.stackName)).toEqual(["PortfolioSiteStack"]);
-    expect(assembly.stacks[0]?.environment.region).toBe("us-east-1");
+    expect(assembly.stacks.map((stack) => stack.stackName).sort()).toEqual([
+      "PortfolioAssistantStack",
+      "PortfolioSiteStack",
+    ]);
+    for (const stack of assembly.stacks) {
+      expect(stack.environment.region).toBe("us-east-1");
+    }
+    const site = assembly.getStackByName("PortfolioSiteStack");
+    expect(site.dependencies.map((dependency) => dependency.id)).toContain(
+      "PortfolioAssistantStack",
+    );
+  });
+
+  it("refuses to synthesize without the staged asset or the adapter layer", () => {
+    const assets = preparedAssets();
+    const context = { context: { siteHostedZoneId: "Z0123456789TESTZONE" } };
+    expect(() =>
+      createSiteApp({
+        app: new App(context),
+        siteDirectory: productionBuild(),
+        lambdaAssetPath: assets.lambdaAssetPath,
+        webAdapterLayerPath: join(tmpdir(), "no-such-layer"),
+      }),
+    ).toThrow(/prepare:web-adapter/);
+    expect(() =>
+      createSiteApp({
+        app: new App(context),
+        siteDirectory: productionBuild(),
+        lambdaAssetPath: join(tmpdir(), "no-such-asset"),
+        webAdapterLayerPath: assets.webAdapterLayerPath,
+      }),
+    ).toThrow(/prepare:api/);
   });
 
   it("requires the hosted zone id as deploy-time context", () => {
-    expect(() => createSiteApp({ app: new App(), siteDirectory: productionBuild() })).toThrow(
-      /-c siteHostedZoneId=/,
-    );
+    expect(() =>
+      createSiteApp({ app: new App(), siteDirectory: productionBuild(), ...preparedAssets() }),
+    ).toThrow(/-c siteHostedZoneId=/);
   });
 
   it("refuses a missing or non-production build", () => {
@@ -63,22 +92,8 @@ describe("site CDK app", () => {
       createSiteApp({
         app: new App({ context: { siteHostedZoneId: "Z0123456789TESTZONE" } }),
         siteDirectory: development,
+        ...preparedAssets(),
       }),
     ).toThrow(/Refusing to deploy/);
-  });
-
-  it("keeps the ask API app from running with site context", () => {
-    const result = spawnSync(process.execPath, ["--import", "tsx", "bin/app.ts"], {
-      cwd: infrastructureDirectory,
-      env: {
-        ...process.env,
-        CDK_CONTEXT_JSON: JSON.stringify({ siteHostedZoneId: "Z0123456789TESTZONE" }),
-        CDK_OUTDIR: mkdtempSync(join(tmpdir(), "ask-app-out-")),
-      },
-      encoding: "utf8",
-    });
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("This is the ask API app");
   });
 });
