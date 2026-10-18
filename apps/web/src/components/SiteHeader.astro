@@ -1,0 +1,42 @@
+---
+import { careerDocuments, contactLinks, isProfile } from "../site-content";
+import { assistantEnabled } from "../site-profile";
+
+interface Props {
+  home?: boolean;
+  askOnPage?: boolean;
+}
+
+const { home = false, askOnPage = home } = Astro.props;
+const profile = (await careerDocuments()).find(isProfile);
+const hasContact = profile ? contactLinks(profile) !== null : false;
+const hasAssistant = assistantEnabled(import.meta.env.PUBLIC_ASK_API_URL);
+
+function sectionHref(id: string): string {
+  return home ? `#${id}` : `/#${id}`;
+}
+
+const links = [
+  { label: "Career", href: sectionHref("career") },
+  { label: "Experience", href: sectionHref("experience") },
+  ...(hasAssistant ? [{ label: "Ask", href: askOnPage ? "#ask" : "/#ask" }] : []),
+  ...(hasContact ? [{ label: "Contact", href: sectionHref("contact") }] : []),
+];
+---
+
+<header class="site-header">
+  <div class="page-width site-header-inner">
+    <a class="logotype" href="/">
+      Lucas Elia
+    </a>
+    <nav aria-label="Primary">
+      <ul class="site-nav">
+        {links.map((link) => (
+          <li>
+            <a href={link.href}>{link.label}</a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  </div>
+</header>

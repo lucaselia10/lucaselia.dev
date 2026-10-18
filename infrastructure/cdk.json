@@ -1,0 +1,8 @@
+{
+  "app": "tsx bin/app.ts",
+  "output": "cdk.out",
+  "watch": {
+    "include": ["bin/**/*.ts", "lib/**/*.ts"],
+    "exclude": ["test/**", "cdk.out", "node_modules"]
+  }
+}

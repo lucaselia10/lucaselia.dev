@@ -1,0 +1,53 @@
+{
+  "name": "career-portfolio",
+  "private": true,
+  "packageManager": "pnpm@12.7.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "format": "prettier --write . && pnpm format:python",
+    "format:check": "prettier --check . && pnpm format:python:check",
+    "format:python": "uv run --directory services/ask-api ruff format .",
+    "format:python:check": "uv run --directory services/ask-api ruff format --check .",
+    "lint": "eslint . && pnpm lint:python",
+    "lint:python": "uv run --directory services/ask-api ruff check .",
+    "typecheck": "pnpm --filter @career-portfolio/web --filter @career-portfolio/infrastructure --filter @career-portfolio/scripts --filter @career-portfolio/content typecheck && pnpm typecheck:python",
+    "typecheck:python": "uv run --directory services/ask-api pyright",
+    "test": "pnpm prepare:api && pnpm --filter @career-portfolio/web --filter @career-portfolio/infrastructure --filter @career-portfolio/scripts --filter @career-portfolio/content test && pnpm build:retrieval && pnpm test:python",
+    "test:python": "uv run --directory services/ask-api pytest",
+    "test:browser": "pnpm --filter @career-portfolio/web test:browser",
+    "build": "pnpm --filter @career-portfolio/web build",
+    "build:site": "PORTFOLIO_SITE=production PUBLIC_ASK_API_URL= PUBLIC_ASK_STREAMING= pnpm --filter @career-portfolio/web build",
+    "validate:content": "pnpm --filter @career-portfolio/scripts validate",
+    "index:content": "pnpm --filter @career-portfolio/scripts index",
+    "sync:content": "pnpm --filter @career-portfolio/scripts sync",
+    "stage:lambda": "pnpm --filter @career-portfolio/scripts stage-lambda",
+    "prepare:api": "pnpm validate:content && pnpm index:content && pnpm sync:content && pnpm stage:lambda",
+    "build:retrieval": "pnpm --filter @career-portfolio/scripts build-retrieval",
+    "publish:retrieval": "pnpm build:retrieval && uv run --directory services/ask-api python -m retrieval_publisher",
+    "synth": "pnpm prepare:api && pnpm --filter @career-portfolio/infrastructure exec cdk synth",
+    "synth:site": "pnpm --filter @career-portfolio/infrastructure run synth:site",
+    "diff:site": "pnpm --filter @career-portfolio/infrastructure run diff:site",
+    "bootstrap:site": "pnpm --filter @career-portfolio/infrastructure run bootstrap:site",
+    "deploy:site": "pnpm --filter @career-portfolio/infrastructure run deploy:site",
+    "destroy:site": "pnpm --filter @career-portfolio/infrastructure run destroy:site",
+    "check:public": "pnpm --filter @career-portfolio/scripts check-public",
+    "dev:api": "pnpm validate:content && pnpm index:content && pnpm sync:content && uv run --directory services/ask-api python dev_server.py",
+    "dev:api:model": "pnpm validate:content && pnpm index:content && pnpm sync:content && pnpm build:retrieval && sh services/ask-api/scripts/dev-model-anthropic.sh",
+    "dev:api:model:bedrock": "pnpm validate:content && pnpm index:content && pnpm sync:content && pnpm build:retrieval && LOCAL_MODEL_CONVERSATION=true LOCAL_MODEL_PROVIDER=bedrock uv run --directory services/ask-api python dev_server.py",
+    "dev:web": "PUBLIC_ASK_API_URL=http://127.0.0.1:8787/ask pnpm --filter @career-portfolio/web dev --host 127.0.0.1",
+    "dev:web:model": "PUBLIC_ASK_API_URL=http://127.0.0.1:8787/ask PUBLIC_ASK_STREAMING=true pnpm --filter @career-portfolio/web dev --host 127.0.0.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "prettier": "^3.9.9",
+    "prettier-plugin-astro": "^1.1.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.70.1"
+  }
+}

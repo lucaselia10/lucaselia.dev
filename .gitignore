@@ -1,0 +1,41 @@
+node_modules/
+dist/
+dist-*/
+.astro/
+cdk.out/
+cdk.out.site/
+cdk.context.json
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.pyc
+*.tsbuildinfo
+coverage/
+playwright-report/
+test-results/
+blob-report/
+.env
+.env.*
+!.env.example
+.DS_Store
+generated/
+infrastructure/asset/
+apps/web/public/career-index.json
+services/ask-api/src/ask_api/data/career-index.json
+
+# Per-user Claude Code overrides. The shared rules in .claude/settings.json are committed.
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Local-only material: session notes, design drafts, and the public-check blocklist.
+private/
+
+# Key material never belongs in this repository.
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+.aws/

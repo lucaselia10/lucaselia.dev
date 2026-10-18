@@ -1,0 +1,22 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="Page not found, Lucas Elia"
+  description="This page does not exist on lucaselia.dev."
+  noindex
+>
+  <section class="page-width not-found" aria-labelledby="not-found-title">
+    <h1 id="not-found-title">This page is not on the plan.</h1>
+    <p class="lead">The address may be mistyped, or the page may have moved.</p>
+    <div class="actions">
+      <a class="button button-primary" href="/">
+        Go to the homepage
+      </a>
+      <a class="button button-secondary" href="/#experience">
+        See my experience
+      </a>
+    </div>
+  </section>
+</BaseLayout>

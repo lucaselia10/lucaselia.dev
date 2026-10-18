@@ -1,0 +1,187 @@
+---
+import { documentPath } from "@career-portfolio/content";
+import { homeSuggestions } from "../ask-suggestions";
+import Assistant from "../components/Assistant.tsx";
+import CareerChart from "../components/CareerChart.astro";
+import { formatEmployer, formatShortDateSpan } from "../format-dates";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { bodyExcerpt } from "../role-body";
+import { contactLinks } from "../site-content";
+import { assistantEnabled } from "../site-profile";
+import {
+  byStartDateDescending,
+  careerChart,
+  careerDocuments,
+  isBackground,
+  isExperience,
+  isProfile,
+} from "../site-content";
+
+const published = await careerDocuments();
+const profile = published.find(isProfile);
+if (!profile) {
+  throw new Error("The public profile is missing.");
+}
+
+const experience = published.filter(isExperience).sort(byStartDateDescending);
+const education = published.filter(isBackground).sort(byStartDateDescending);
+const chart = await careerChart();
+
+// Approved hero copy. It is also the homepage meta description and Open Graph description.
+const intro =
+  "I’m Lucas Elia, a software engineer at AWS in Seattle. I work on backend systems for capacity planning.";
+const status = "This site is new and I’m building it in the open. More is on the way.";
+const path = bodyExcerpt(profile.body ?? "", "My path into software wasn’t traditional.", 2);
+
+const skipped = chart.scale.gap?.label.replace("–", " to ");
+const caption = skipped
+  ? `Each bar opens that role. The axis skips ${skipped} to give recent roles more room.`
+  : "Each bar opens that role.";
+
+const askApiUrl = import.meta.env.PUBLIC_ASK_API_URL;
+const modelStreaming = import.meta.env.PUBLIC_ASK_STREAMING === "true";
+// The v1 site ships without the assistant: no panel, button, or teaser unless a URL is set.
+const showAssistant = assistantEnabled(askApiUrl);
+const contact = contactLinks(profile);
+---
+
+<BaseLayout title="Lucas Elia, software engineer" description={intro} home>
+  <section
+    class:list={["page-width", "hero", { "hero-solo": !showAssistant }]}
+    aria-labelledby="hero-title"
+  >
+    <div class="hero-intro">
+      <h1 id="hero-title">
+        I build dependable backend systems for complex, <span class="nowrap">high-stakes</span>{" "}
+        planning problems.
+      </h1>
+      <p class="hero-copy">{intro}</p>
+      <p class="hero-status">{status}</p>
+      {showAssistant ? (
+        <div class="actions">
+          <a class="button button-primary" href="#ask">
+            Ask about my work
+          </a>
+          <a class="button button-secondary" href="#career">
+            See my career
+          </a>
+        </div>
+      ) : (
+        <div class="actions">
+          <a class="button button-primary" href="#career">
+            See my career
+          </a>
+          {contact && (
+            <a class="button button-secondary" href="#contact">
+              Contact
+            </a>
+          )}
+        </div>
+      )}
+    </div>
+    {showAssistant && (
+      <div class="hero-ask">
+        <Assistant
+          client:load
+          askApiUrl={askApiUrl}
+          modelStreaming={modelStreaming}
+          suggestions={homeSuggestions(modelStreaming)}
+        />
+      </div>
+    )}
+  </section>
+
+  <section id="career" class="page-width section" aria-labelledby="career-title">
+    <div class="section-head">
+      <h2 id="career-title">How I got here</h2>
+      <p>{path}</p>
+    </div>
+    <CareerChart chart={chart} />
+    <p class="chart-caption">{caption}</p>
+  </section>
+
+  <section id="experience" class="page-width section" aria-labelledby="experience-title">
+    <h2 id="experience-title">Experience</h2>
+    <ol class="record-list">
+      {experience.map((document) => (
+        <li class="record-row">
+          <div class="record-dates">
+            <p class="record-span">
+              {formatShortDateSpan(document.data.start_date, document.data.end_date)}
+            </p>
+            <p class="record-kind">{document.data.employment_type}</p>
+          </div>
+          <div class="record-role">
+            <h3>
+              <a href={documentPath("experience", document.data.id)}>{document.data.role_title}</a>
+            </h3>
+            <p class="record-employer">{formatEmployer(document.data.employer)}</p>
+            {document.data.location ? <p class="record-place">{document.data.location}</p> : null}
+          </div>
+          <p class="record-summary">{document.data.summary}</p>
+        </li>
+      ))}
+    </ol>
+  </section>
+
+  <section id="education" class="page-width section" aria-labelledby="education-title">
+    <h2 id="education-title">Education</h2>
+    <ol class="record-list">
+      {education.map((document) => (
+        <li class="record-row">
+          <div class="record-dates">
+            <p class="record-span">
+              {formatShortDateSpan(document.data.start_date, document.data.end_date)}
+            </p>
+          </div>
+          <div class="record-role">
+            <h3>
+              <a href={documentPath("background", document.data.id)}>{document.data.program}</a>
+            </h3>
+            <p class="record-employer">{document.data.institution}</p>
+          </div>
+          <div class="record-summary">
+            <p>{document.data.summary}</p>
+            <p class="record-status">
+              {document.data.education_status === "completed" ? "Completed." : "Attended."}{" "}
+              {document.data.degree_awarded ? "Degree awarded." : "No degree awarded."}
+            </p>
+          </div>
+        </li>
+      ))}
+    </ol>
+  </section>
+  {contact && (
+    <section id="contact" class="contact" aria-labelledby="contact-title">
+      <div class="page-width contact-inner">
+        <div>
+          <h2 id="contact-title">Contact</h2>
+          <p>The best way to reach me is email. I’m also on LinkedIn and GitHub.</p>
+        </div>
+        <ul class="contact-links">
+          {contact.email && (
+            <li>
+              <a class="contact-link contact-link-primary" href={`mailto:${contact.email}`}>
+                Email
+              </a>
+            </li>
+          )}
+          {contact.linkedin && (
+            <li>
+              <a class="contact-link" href={contact.linkedin} rel="noopener">
+                LinkedIn
+              </a>
+            </li>
+          )}
+          {contact.github && (
+            <li>
+              <a class="contact-link" href={contact.github} rel="noopener">
+                GitHub
+              </a>
+            </li>
+          )}
+        </ul>
+      </div>
+    </section>
+  )}
+</BaseLayout>

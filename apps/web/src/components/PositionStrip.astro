@@ -1,0 +1,50 @@
+---
+import type { CareerChart } from "../career-chart";
+import { formatDateSpan } from "../format-dates";
+
+interface Props {
+  chart: CareerChart;
+  documentId: string;
+  /** "role" for experience pages, "program" for education pages. */
+  noun?: "role" | "program";
+}
+
+const { chart, documentId, noun = "role" } = Astro.props;
+const This = noun === "program" ? "This program" : "This role";
+const pct = (value: number) => `${value.toFixed(2)}%`;
+const bars = chart.lanes.flatMap((lane) => lane.bars);
+const current = bars.find((bar) => bar.id === documentId);
+const others = bars.filter((bar) => bar.id !== documentId);
+const description = current
+  ? `${This}, ${formatDateSpan(current.start, current.end)}, within a career from ${chart.scale.domainStart} to today.`
+  : "";
+---
+
+{current && (
+  <figure class="position-strip">
+    <div class="strip-track" role="img" aria-label={description}>
+      {chart.scale.gap && (
+        <div
+          class="chart-gap"
+          style={`left: ${pct(chart.scale.gap.startPct)}; width: ${pct(chart.scale.gap.endPct - chart.scale.gap.startPct)}`}
+        />
+      )}
+      {others.map((bar) => (
+        <div
+          class:list={["strip-bar", { "chart-bar-joined": bar.abutsPrevious }]}
+          style={`left: ${pct(bar.left)}; width: ${pct(bar.width)}`}
+        />
+      ))}
+      <div
+        class:list={["strip-bar", "strip-current", `lane-${current.lane}`]}
+        style={`left: ${pct(current.left)}; width: ${pct(current.width)}`}
+      />
+      <div class="today-line strip-today" style={`left: ${pct(chart.todayPct)}`} />
+    </div>
+    <figcaption class="strip-caption">
+      <span>{chart.scale.domainStart}</span>
+      <span>{This}, within my career so far</span>
+      <span class="strip-today-label">Today</span>
+    </figcaption>
+  </figure>
+)}

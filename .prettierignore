@@ -1,0 +1,15 @@
+pnpm-lock.yaml
+services/ask-api/uv.lock
+node_modules/
+dist/
+dist-*/
+.astro/
+cdk.out/
+cdk.out.site/
+.venv/
+coverage/
+generated/
+infrastructure/asset/
+apps/web/public/career-index.json
+services/ask-api/src/ask_api/data/career-index.json
+private/

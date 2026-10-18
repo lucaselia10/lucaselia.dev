@@ -1,0 +1,15 @@
+---
+import { formatEmployer } from "../format-dates";
+import { currentRole } from "../site-content";
+
+const role = await currentRole();
+---
+
+<footer class="site-footer">
+  <div class="page-width site-footer-inner">
+    <p class="logotype">Lucas Elia</p>
+    <p>
+      {role.data.role_title} at {formatEmployer(role.data.employer)}
+    </p>
+  </div>
+</footer>

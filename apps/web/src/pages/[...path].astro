@@ -1,0 +1,234 @@
+---
+import { documentPath, isPublishedVisibility } from "@career-portfolio/content";
+import { getCollection, render, type CollectionEntry } from "astro:content";
+import { pageSuggestions } from "../ask-suggestions";
+import Assistant from "../components/Assistant.tsx";
+import PositionStrip from "../components/PositionStrip.astro";
+import { formatDateSpan, formatEmployer } from "../format-dates";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { parseRoleBody } from "../role-body";
+import { assistantEnabled, isProductionSite, shipsDocument } from "../site-profile";
+import {
+  byStartDateDescending,
+  careerChart,
+  careerDocuments,
+  isBackground,
+  isExperience,
+  type BackgroundDocument,
+  type ExperienceDocument,
+} from "../site-content";
+
+export async function getStaticPaths() {
+  // The production site leaves out test fixtures such as Lumen Harbor; other builds keep them.
+  const production = isProductionSite();
+  const documents = (await getCollection("public")).filter(
+    (document) =>
+      isPublishedVisibility(document.data.visibility) &&
+      shipsDocument(document.data.id, production),
+  );
+  return documents.map((document) => {
+    const route = documentPath(document.data.type, document.data.id);
+    if (document.id !== document.data.id) {
+      throw new Error(
+        `Citation route ${route} cannot be resolved because the content entry id does not match the document id.`,
+      );
+    }
+    return {
+      params: { path: route.slice(1) },
+      props: { document },
+    };
+  });
+}
+
+interface Props {
+  document: CollectionEntry<"public">;
+}
+
+const { document } = Astro.props;
+if (!document) {
+  throw new Error("Public document route is missing its document.");
+}
+
+const data = document.data;
+const { Content } = await render(document);
+const fictional = data.id.startsWith("fictional-");
+const career = await careerDocuments();
+const chart = await careerChart();
+
+const roleBody =
+  data.type === "experience" ? parseRoleBody(document.body ?? "", data.summary) : null;
+const workHeading =
+  data.type === "experience" && data.end_date === null ? "What I work on" : "What I worked on";
+const bodyRepeatsSummary = (document.body ?? "").replace(/\s+/g, " ").includes(data.summary.trim());
+
+// Earlier and later entries of the same kind, by start date.
+const siblings: Array<ExperienceDocument | BackgroundDocument> =
+  data.type === "experience"
+    ? career.filter(isExperience).sort(byStartDateDescending)
+    : data.type === "background"
+      ? career.filter(isBackground).sort(byStartDateDescending)
+      : [];
+const position = siblings.findIndex((sibling) => sibling.data.id === data.id);
+const later = position > 0 ? siblings[position - 1] : undefined;
+const earlier = position >= 0 ? siblings[position + 1] : undefined;
+const noun = data.type === "background" ? "program" : "role";
+const siblingTitle = (sibling: ExperienceDocument | BackgroundDocument) =>
+  sibling.data.type === "experience" ? sibling.data.role_title : sibling.data.program;
+
+const back =
+  data.type === "experience"
+    ? { href: "/#experience", label: "All experience" }
+    : data.type === "background"
+      ? { href: "/#education", label: "All education" }
+      : { href: "/", label: "Back to the portfolio" };
+
+const askApiUrl = import.meta.env.PUBLIC_ASK_API_URL;
+const showAsk = assistantEnabled(askApiUrl) && !fictional && data.type !== "project";
+const askHeading =
+  data.type === "experience"
+    ? "Ask about this role"
+    : data.type === "background"
+      ? "Ask about this program"
+      : "Ask about my work";
+
+const modelStreaming = import.meta.env.PUBLIC_ASK_STREAMING === "true";
+---
+
+<BaseLayout title={`${data.title}, Lucas Elia`} description={data.summary} askOnPage={showAsk}>
+  <article class="page-width detail">
+    <a class="back-link" href={back.href}>
+      {back.label}
+    </a>
+    {fictional && (
+      <p class="fixture-notice">
+        Fictional test document. This page is a validation fixture and is not part of the career
+        record.
+      </p>
+    )}
+    <h1>{data.title}</h1>
+    <div class="detail-meta">
+      {data.type === "experience" && (
+        <>
+          <p>
+            {formatEmployer(data.employer)}
+            {data.location ? `, ${data.location}` : ""}
+          </p>
+          <p>
+            {formatDateSpan(data.start_date, data.end_date)}, {data.employment_type.toLowerCase()}
+          </p>
+        </>
+      )}
+      {data.type === "background" && (
+        <>
+          <p>{data.institution}</p>
+          <p>
+            {formatDateSpan(data.start_date, data.end_date)}.{" "}
+            {data.education_status === "completed" ? "Completed" : "Attended"},{" "}
+            {data.degree_awarded ? "degree awarded" : "no degree awarded"}.
+          </p>
+        </>
+      )}
+      {data.type === "profile" && <p>{data.location}</p>}
+    </div>
+
+    {(data.type === "experience" || data.type === "background") && (
+      <PositionStrip
+        chart={chart}
+        documentId={data.id}
+        noun={data.type === "background" ? "program" : "role"}
+      />
+    )}
+
+    <div class:list={["detail-body", { "detail-body-with-ask": showAsk }]}>
+      <div class="detail-main">
+        {!(data.type !== "experience" && bodyRepeatsSummary) && <p class="lead">{data.summary}</p>}
+
+        {data.type === "project" && (
+          <dl class="facts">
+            <dt>Status</dt>
+            <dd>{data.status}</dd>
+            {data.skills.length > 0 && (
+              <>
+                <dt>Skills</dt>
+                <dd>{data.skills.join(", ")}</dd>
+              </>
+            )}
+            {data.topics.length > 0 && (
+              <>
+                <dt>Topics</dt>
+                <dd>{data.topics.join(", ")}</dd>
+              </>
+            )}
+          </dl>
+        )}
+
+        {roleBody ? (
+          <>
+            {roleBody.sections.map((section, index) => (
+              <section class="role-section">
+                <h2 id={section.id}>{index === 0 ? workHeading : section.heading}</h2>
+                {section.blocks.map((block) =>
+                  block.kind === "list" ? (
+                    <ul class="role-list">
+                      {block.items.map((item) => (
+                        <li>{item}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{block.text}</p>
+                  ),
+                )}
+              </section>
+            ))}
+            {roleBody.technologies && (
+              <section class="role-section">
+                <h2>Technologies</h2>
+                <p>{roleBody.technologies}</p>
+              </section>
+            )}
+          </>
+        ) : (
+          <div class="prose">
+            <Content />
+          </div>
+        )}
+
+        {siblings.length > 0 && (
+          <nav class="sibling-nav" aria-label={`Other ${noun}s`}>
+            {earlier ? (
+              <a href={documentPath(earlier.data.type, earlier.data.id)}>
+                Earlier {noun}: {siblingTitle(earlier)}
+              </a>
+            ) : (
+              <span>This is my earliest {noun}.</span>
+            )}
+            {later ? (
+              <a href={documentPath(later.data.type, later.data.id)}>
+                Later {noun}: {siblingTitle(later)}
+              </a>
+            ) : (
+              <span>
+                {data.type === "experience"
+                  ? "This is my current role."
+                  : `This is my latest ${noun}.`}
+              </span>
+            )}
+          </nav>
+        )}
+      </div>
+
+      {showAsk && (
+        <div class="detail-ask">
+          <Assistant
+            client:load
+            askApiUrl={askApiUrl}
+            modelStreaming={modelStreaming}
+            variant="compact"
+            heading={askHeading}
+            suggestions={pageSuggestions(data.id, data.type, modelStreaming)}
+          />
+        </div>
+      )}
+    </div>
+  </article>
+</BaseLayout>

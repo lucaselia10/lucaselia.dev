@@ -1,0 +1,218 @@
+openapi: 3.1.0
+info:
+  title: Career Portfolio Ask API
+  version: 0.1.0
+  description: >
+    Contract for the stateless POST /ask endpoint. A career question is
+    answered from the generated career index when it matches one of four exact
+    fact families: current role, employment history, education, or technologies.
+    An unsupported career question returns a fixed fallback and no citations
+    when no grounding provider is configured, when retrieval returns no chunks,
+    or when generation returns the validated insufficient-evidence answer.
+    A configured grounding dependency failure returns 503. Job comparison is
+    accepted and is not implemented. history is validated and
+    is used only to resolve a follow-up from the packaged career index.
+    It is not sent to a model. The deployed response is one JSON document;
+    this contract does not stream. The local development server can return
+    newline-delimited events when Accept includes application/x-ndjson and
+    LOCAL_MODEL_CONVERSATION is set. That local response is not this schema.
+    Exact answers do not call a model.
+    When grounding is enabled, an unmatched question uses Knowledge Base
+    Retrieve and Nova Converse. The same generated index is bundled with the Lambda, so a content
+    change requires a new deployment. Each invocation has its own requestId.
+paths:
+  /ask:
+    post:
+      operationId: ask
+      summary: Answer a career question or compare a job description.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AskRequest"
+            examples:
+              currentRole:
+                value:
+                  question: What is Lucas's current role?
+                  mode: career_question
+              unsupported:
+                value:
+                  question: What is the weather in Seattle?
+                  mode: career_question
+              jobComparison:
+                value:
+                  question: How does this job description compare?
+                  mode: job_comparison
+      responses:
+        "200":
+          description: >
+            An exact answer, the successful unsupported-question fallback, or
+            the unimplemented job-comparison response. The unsupported fallback
+            means the public corpus does not contain enough evidence.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AskResponse"
+              examples:
+                currentRole:
+                  value:
+                    answer: >
+                      Lucas Elia is Software Development Engineer II at Amazon
+                      Web Services in Seattle, WA. The role started in 2025-12.
+                    citations:
+                      - chunkId: aws-sde-ii:role-description:0
+                        documentId: aws-sde-ii
+                        title: Software Development Engineer II
+                        section: Role Description
+                        type: experience
+                        url: /experience/aws-sde-ii#role-description
+                    suggestedQuestions:
+                      - Where has Lucas worked?
+                      - Does Lucas have a college degree?
+                      - What technologies does Lucas use?
+                    requestId: 00000000-0000-4000-8000-000000000001
+                unsupported:
+                  value:
+                    answer: "I don't have anything on that in Lucas's career pages. You can ask about his roles at AWS, what he's worked on, or his education."
+                    citations: []
+                    suggestedQuestions:
+                      - What is Lucas's current role?
+                      - Where has Lucas worked?
+                      - Does Lucas have a college degree?
+                      - What technologies does Lucas use?
+                    requestId: 00000000-0000-4000-8000-000000000002
+                jobComparison:
+                  value:
+                    answer: >
+                      Job comparison is not implemented. No model was called and
+                      no career material was compared.
+                    citations: []
+                    suggestedQuestions: []
+                    requestId: 00000000-0000-4000-8000-000000000003
+        "400":
+          description: The request body failed validation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "405":
+          description: The route was called with a method other than POST.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: >
+            The packaged career index could not be loaded. The message does not
+            include internal exception details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >
+            A configured grounding provider failed. This covers retrieval
+            unavailability, generation unavailability, malformed generated
+            output, an ungrounded answer, and an unexpected grounding exception.
+            The message is fixed and includes the invocation requestId. It does
+            not include exception text, provider output, prompts, retrieved
+            passages, AWS identifiers, paths, or implementation details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                message: The career assistant is temporarily unavailable.
+                requestId: gateway-request-503
+components:
+  schemas:
+    AskRequest:
+      type: object
+      additionalProperties: false
+      required: [question, mode]
+      properties:
+        question:
+          type: string
+          minLength: 1
+          maxLength: 8000
+        mode:
+          type: string
+          enum: [career_question, job_comparison]
+        history:
+          type: array
+          maxItems: 20
+          description: >
+            Accepted and validated. Not used for intent recognition or retrieval.
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+    ChatMessage:
+      type: object
+      additionalProperties: false
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+          maxLength: 8000
+    AskResponse:
+      type: object
+      additionalProperties: false
+      required: [answer, citations, suggestedQuestions, requestId]
+      properties:
+        answer:
+          type: string
+        citations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Citation"
+        suggestedQuestions:
+          type: array
+          items:
+            type: string
+        requestId:
+          $ref: "#/components/schemas/RequestId"
+    Citation:
+      type: object
+      additionalProperties: false
+      required: [chunkId, documentId, title, section, url]
+      properties:
+        chunkId:
+          type: string
+        documentId:
+          type: string
+        title:
+          type: string
+        section:
+          type: string
+        type:
+          type: string
+          enum: [profile, experience, project, background]
+        roles:
+          type: array
+          items:
+            type: string
+        skills:
+          type: array
+          items:
+            type: string
+        url:
+          type: string
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [message, requestId]
+      properties:
+        message:
+          type: string
+        requestId:
+          $ref: "#/components/schemas/RequestId"
+    RequestId:
+      type: string
+      minLength: 1
+      description: >
+        Identifies this invocation. The handler uses requestContext.requestId
+        when the Lambda event supplies an API Gateway request ID. Otherwise it
+        generates a new UUIDv4. Validation errors include the same identifier.

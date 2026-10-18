@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "apprenticeship-transition",
+      "question": "How did Lucas enter software engineering through the AWS apprenticeship?",
+      "route": "grounded",
+      "expectedDocumentIds": ["aws-sde-apprentice"],
+      "expectedChunkIds": ["aws-sde-apprentice:role-description:0"],
+      "forbiddenDocumentIds": ["fictional-lumen-harbor"],
+      "reason": "The apprenticeship narrative is the public source for that career transition."
+    },
+    {
+      "id": "automated-testing",
+      "question": "What does the public record say about Lucas practicing testing, debugging, and code review?",
+      "route": "grounded",
+      "expectedDocumentIds": ["aws-sde-apprentice"],
+      "expectedChunkIds": ["aws-sde-apprentice:role-description:0"],
+      "forbiddenDocumentIds": ["fictional-lumen-harbor"],
+      "reason": "The apprenticeship section is the public passage that names testing and code review."
+    },
+    {
+      "id": "aws-infrastructure",
+      "question": "What cloud infrastructure work does the public record attribute to Lucas?",
+      "route": "grounded",
+      "expectedDocumentIds": ["aws-sde-i", "aws-sde-ii"],
+      "expectedChunkIds": ["aws-sde-i:role-description:0", "aws-sde-ii:role-description:0"],
+      "forbiddenDocumentIds": ["fictional-lumen-harbor"],
+      "reason": "The SDE I and SDE II sections describe the public cloud infrastructure work."
+    },
+    {
+      "id": "backend-engineering",
+      "question": "What backend engineering work is described for Lucas?",
+      "route": "grounded",
+      "expectedDocumentIds": [
+        "aws-sde-apprentice",
+        "aws-sde-i",
+        "aws-sde-ii",
+        "expert-assist-consultant"
+      ],
+      "expectedChunkIds": [
+        "aws-sde-apprentice:role-description:0",
+        "aws-sde-i:role-description:0",
+        "aws-sde-ii:role-description:0",
+        "expert-assist-consultant:role-description:0"
+      ],
+      "forbiddenDocumentIds": ["fictional-lumen-harbor"],
+      "reason": "Those experience sections are the public backend engineering sources."
+    },
+    {
+      "id": "distributed-systems",
+      "question": "Which parts of Lucas Elia's public background describe large-scale systems work?",
+      "route": "grounded",
+      "expectedDocumentIds": ["aws-sde-ii", "lucas-elia"],
+      "expectedChunkIds": ["aws-sde-ii:role-description:0", "lucas-elia:about:0"],
+      "forbiddenDocumentIds": ["fictional-lumen-harbor"],
+      "reason": "The profile and current-role sections describe the public large-scale platform work."
+    },
+    {
+      "id": "education-background",
+      "question": "Which programs has Lucas completed or attended, and was a degree awarded?",
+      "route": "grounded",
+      "expectedDocumentIds": ["bloomtech-backend-development", "sierra-college-general-studies"],
+      "expectedChunkIds": [
+        "bloomtech-backend-development:program:0",
+        "sierra-college-general-studies:coursework:0"
+      ],
+      "forbiddenDocumentIds": ["fictional-lumen-harbor"],
+      "reason": "The two education sections are the public record of programs and degree status."
+    },
+    {
+      "id": "exact-current-role",
+      "question": "What is Lucas's current role?",
+      "route": "exact",
+      "expectedDocumentIds": ["aws-sde-ii"],
+      "expectedChunkIds": ["aws-sde-ii:role-description:0"],
+      "forbiddenDocumentIds": ["fictional-lumen-harbor"],
+      "reason": "Current role is answered from the deterministic fact index, not from generation."
+    },
+    {
+      "id": "follow-up-tools-partial-support",
+      "question": "What tools did you use for that?",
+      "history": [
+        {
+          "role": "user",
+          "content": "How have you improved production reliability?"
+        },
+        {
+          "role": "assistant",
+          "content": "Lucas improved production reliability across containerized compute and workflow orchestration."
+        }
+      ],
+      "route": "grounded",
+      "expectedDocumentIds": ["aws-sde-ii"],
+      "expectedChunkIds": ["aws-sde-ii:role-description:0"],
+      "forbiddenDocumentIds": ["fictional-lumen-harbor"],
+      "reason": "Partial support: the SDE II page lists technologies but does not tie specific ones to the reliability work. The answer states that gap plainly, names the role's technologies, and cites SDE II instead of refusing. Found in the October 14, 2026 live run."
+    },
+    {
+      "id": "performance-improvement",
+      "question": "How did Lucas support high-memory workloads?",
+      "route": "grounded",
+      "expectedDocumentIds": ["aws-sde-ii"],
+      "expectedChunkIds": ["aws-sde-ii:role-description:0"],
+      "forbiddenDocumentIds": ["fictional-lumen-harbor"],
+      "reason": "The current-role section is the public source for high-memory workload support."
+    },
+    {
+      "id": "production-reliability",
+      "question": "How does the public record describe Lucas improving production reliability?",
+      "route": "grounded",
+      "expectedDocumentIds": ["aws-sde-ii"],
+      "expectedChunkIds": ["aws-sde-ii:role-description:0"],
+      "forbiddenDocumentIds": ["fictional-lumen-harbor"],
+      "reason": "The current-role section names production reliability work."
+    },
+    {
+      "id": "small-business-background",
+      "question": "What small-business or entrepreneurial work did Lucas do before software?",
+      "route": "grounded",
+      "expectedDocumentIds": ["hospitality-businesses-co-founder", "lucas-elia"],
+      "expectedChunkIds": [
+        "hospitality-businesses-co-founder:role-description:0",
+        "lucas-elia:about:0"
+      ],
+      "forbiddenDocumentIds": ["fictional-lumen-harbor"],
+      "reason": "The co-founder section and profile narrative are the public entrepreneurial sources."
+    },
+    {
+      "id": "unsupported-personal-color",
+      "question": "What is Lucas's favorite color?",
+      "route": "unsupported",
+      "expectedDocumentIds": [],
+      "expectedChunkIds": [],
+      "forbiddenDocumentIds": ["fictional-lumen-harbor"],
+      "reason": "Personal preference is not an exact career fact and is not supported by the public corpus."
+    }
+  ]
+}

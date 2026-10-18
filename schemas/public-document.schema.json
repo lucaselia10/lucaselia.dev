@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://career-portfolio.local/schemas/public-document.schema.json",
+  "title": "PublicCareerDocument",
+  "oneOf": [
+    { "$ref": "#/$defs/profile" },
+    { "$ref": "#/$defs/experience" },
+    { "$ref": "#/$defs/project" },
+    { "$ref": "#/$defs/background" }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "uniqueStrings": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/nonEmptyString" }
+    },
+    "idList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "month": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$"
+    },
+    "monthOrNull": {
+      "oneOf": [{ "$ref": "#/$defs/month" }, { "type": "null" }]
+    },
+    "locationOrNull": {
+      "oneOf": [{ "$ref": "#/$defs/nonEmptyString" }, { "type": "null" }]
+    },
+    "visibility": {
+      "enum": ["public", "draft"]
+    },
+    "lastReviewed": {
+      "type": "string",
+      "format": "date"
+    },
+    "httpsUrl": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://[^\\s/]+\\.[^\\s/]+(/[^\\s]*)?$"
+    },
+    "email": {
+      "type": "string",
+      "format": "email"
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "title",
+        "summary",
+        "skills",
+        "topics",
+        "featured",
+        "visibility",
+        "assistant_retrievable",
+        "last_reviewed",
+        "headline",
+        "location",
+        "current_role"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "const": "profile" },
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "summary": { "$ref": "#/$defs/nonEmptyString" },
+        "skills": { "$ref": "#/$defs/uniqueStrings" },
+        "topics": { "$ref": "#/$defs/uniqueStrings" },
+        "featured": { "type": "boolean" },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "assistant_retrievable": { "type": "boolean" },
+        "last_reviewed": { "$ref": "#/$defs/lastReviewed" },
+        "headline": { "$ref": "#/$defs/nonEmptyString" },
+        "location": { "$ref": "#/$defs/nonEmptyString" },
+        "current_role": { "$ref": "#/$defs/id" },
+        "linkedin_url": { "$ref": "#/$defs/httpsUrl" },
+        "github_url": { "$ref": "#/$defs/httpsUrl" },
+        "email": { "$ref": "#/$defs/email" }
+      }
+    },
+    "experience": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "title",
+        "summary",
+        "skills",
+        "topics",
+        "featured",
+        "visibility",
+        "assistant_retrievable",
+        "last_reviewed",
+        "employer",
+        "role_title",
+        "start_date",
+        "end_date",
+        "employment_type",
+        "location"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "const": "experience" },
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "summary": { "$ref": "#/$defs/nonEmptyString" },
+        "skills": { "$ref": "#/$defs/uniqueStrings" },
+        "topics": { "$ref": "#/$defs/uniqueStrings" },
+        "featured": { "type": "boolean" },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "assistant_retrievable": { "type": "boolean" },
+        "last_reviewed": { "$ref": "#/$defs/lastReviewed" },
+        "employer": { "$ref": "#/$defs/nonEmptyString" },
+        "role_title": { "$ref": "#/$defs/nonEmptyString" },
+        "start_date": { "$ref": "#/$defs/month" },
+        "end_date": { "$ref": "#/$defs/monthOrNull" },
+        "employment_type": { "$ref": "#/$defs/nonEmptyString" },
+        "location": { "$ref": "#/$defs/locationOrNull" }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "title",
+        "summary",
+        "skills",
+        "topics",
+        "featured",
+        "visibility",
+        "assistant_retrievable",
+        "last_reviewed",
+        "status",
+        "roles"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "const": "project" },
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "summary": { "$ref": "#/$defs/nonEmptyString" },
+        "skills": { "$ref": "#/$defs/uniqueStrings" },
+        "topics": { "$ref": "#/$defs/uniqueStrings" },
+        "featured": { "type": "boolean" },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "assistant_retrievable": { "type": "boolean" },
+        "last_reviewed": { "$ref": "#/$defs/lastReviewed" },
+        "status": { "enum": ["active", "completed", "archived"] },
+        "roles": { "$ref": "#/$defs/idList" }
+      }
+    },
+    "background": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "title",
+        "summary",
+        "skills",
+        "topics",
+        "featured",
+        "visibility",
+        "assistant_retrievable",
+        "last_reviewed",
+        "category",
+        "institution",
+        "program",
+        "start_date",
+        "end_date",
+        "education_status",
+        "degree_awarded"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "const": "background" },
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "summary": { "$ref": "#/$defs/nonEmptyString" },
+        "skills": { "$ref": "#/$defs/uniqueStrings" },
+        "topics": { "$ref": "#/$defs/uniqueStrings" },
+        "featured": { "type": "boolean" },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "assistant_retrievable": { "type": "boolean" },
+        "last_reviewed": { "$ref": "#/$defs/lastReviewed" },
+        "category": { "const": "education" },
+        "institution": { "$ref": "#/$defs/nonEmptyString" },
+        "program": { "$ref": "#/$defs/nonEmptyString" },
+        "start_date": { "$ref": "#/$defs/month" },
+        "end_date": { "$ref": "#/$defs/month" },
+        "education_status": { "enum": ["completed", "attended"] },
+        "degree_awarded": { "type": "boolean" }
+      }
+    }
+  }
+}

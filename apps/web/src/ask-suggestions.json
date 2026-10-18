@@ -1,0 +1,133 @@
+{
+  "$comment": "Suggested questions per page. 'index' entries are shown in the default deterministic mode and are each run through the exact-answer handler by services/ask-api/tests/test_suggestions.py, which requires a real answer that mentions 'mentions'. 'model' entries are shown when PUBLIC_ASK_STREAMING is true.",
+  "home": {
+    "index": [
+      {
+        "question": "What have you built at AWS?",
+        "mentions": "Amazon Web Services"
+      },
+      {
+        "question": "Where have you worked?",
+        "mentions": "Expert Assist"
+      },
+      {
+        "question": "What is your education?",
+        "mentions": "BloomTech"
+      },
+      {
+        "question": "How did you move into software engineering?",
+        "mentions": "Apprentice"
+      }
+    ],
+    "model": [
+      "What have you built at AWS?",
+      "How have you improved production reliability?",
+      "What distributed-systems work have you done?",
+      "How did you move into software engineering?"
+    ]
+  },
+  "pages": {
+    "aws-sde-ii": {
+      "index": [
+        {
+          "question": "What did you do as Software Development Engineer II?",
+          "mentions": "Software Development Engineer II"
+        },
+        {
+          "question": "What technologies do you use?",
+          "mentions": "Software Development Engineer II"
+        }
+      ],
+      "model": [
+        "What does the capacity-planning platform do?",
+        "How did you improve reliability here?",
+        "What technologies do you use here?"
+      ]
+    },
+    "aws-sde-i": {
+      "index": [
+        {
+          "question": "What did you do as Software Development Engineer I?",
+          "mentions": "Software Development Engineer I at"
+        }
+      ],
+      "model": [
+        "What did you build for the capacity-planning platform?",
+        "How did you cut optimization runtime?",
+        "What did you change in the allocation logic?"
+      ]
+    },
+    "aws-sde-apprentice": {
+      "index": [
+        {
+          "question": "What did you do as Software Development Engineer Apprentice?",
+          "mentions": "Software Development Engineer Apprentice"
+        },
+        {
+          "question": "How did you move into software engineering?",
+          "mentions": "Apprentice"
+        }
+      ],
+      "model": [
+        "What did you work on as an apprentice?",
+        "How did you move into software engineering?"
+      ]
+    },
+    "expert-assist-consultant": {
+      "index": [
+        {
+          "question": "What did you do at Expert Assist?",
+          "mentions": "Expert Assist"
+        }
+      ],
+      "model": [
+        "What did you build on the Java backend?",
+        "What client work did you do at Expert Assist?"
+      ]
+    },
+    "hospitality-businesses-co-founder": {
+      "index": [
+        {
+          "question": "What did you do as Co-Founder?",
+          "mentions": "Co-Founder"
+        },
+        {
+          "question": "How did you move into software engineering?",
+          "mentions": "Co-Founder"
+        }
+      ],
+      "model": ["Which businesses did you co-found?", "How did you move into software engineering?"]
+    },
+    "bloomtech-backend-development": {
+      "index": [
+        {
+          "question": "What is your education?",
+          "mentions": "BloomTech"
+        },
+        {
+          "question": "How did you move into software engineering?",
+          "mentions": "BloomTech"
+        }
+      ],
+      "model": ["What did you study at BloomTech?", "How did you move into software engineering?"]
+    },
+    "sierra-college-general-studies": {
+      "index": [
+        {
+          "question": "What is your education?",
+          "mentions": "Sierra College"
+        }
+      ],
+      "model": ["What did you study at Sierra College?"]
+    }
+  },
+  "fallback": {
+    "index": [
+      {
+        "question": "Where have you worked?",
+        "mentions": "Amazon Web Services"
+      }
+    ],
+    "model": ["What did you do in this role?"]
+  }
+}

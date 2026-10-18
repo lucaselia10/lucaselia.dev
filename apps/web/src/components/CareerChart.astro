@@ -1,0 +1,167 @@
+---
+import { layoutHorizontalLabels, layoutVerticalLabels, type CareerChart } from "../career-chart";
+
+interface Props {
+  chart: CareerChart;
+}
+
+const { chart } = Astro.props;
+const pct = (value: number) => `${value.toFixed(2)}%`;
+
+// Horizontal (desktop) geometry, in px.
+const BAR_TOP = 10;
+const BAR_HEIGHT = 24;
+const LABEL_TOP = BAR_TOP + BAR_HEIGHT + 5;
+const LABEL_LINE = 16;
+const INSIDE_TOP = BAR_TOP + (BAR_HEIGHT - LABEL_LINE) / 2;
+
+const horizontal = chart.lanes.map((lane) => {
+  const labels = layoutHorizontalLabels(lane.bars);
+  const hasBelow = labels.some((label) => label.position === "below");
+  const height = hasBelow ? LABEL_TOP + LABEL_LINE + 10 : BAR_TOP + BAR_HEIGHT + 10;
+  return { lane, labels, height };
+});
+
+// Vertical (phone) geometry, in px. Time runs down from Today at the top.
+const V_HEIGHT = 720;
+const V_LINE = 16;
+const V_AXIS = 46;
+const V_COLUMN = 22;
+const V_BAR = 16;
+const V_LABEL_CHARS = 22;
+const vLabelLeft = V_AXIS + chart.lanes.length * V_COLUMN + 10;
+const vBars = chart.lanes.flatMap((lane, index) =>
+  lane.bars.map((bar) => ({ bar, x: V_AXIS + index * V_COLUMN + (V_COLUMN - V_BAR) / 2 })),
+);
+const vLabels = layoutVerticalLabels(
+  vBars.map(({ bar }) => bar),
+  V_HEIGHT,
+  V_LINE,
+  V_LABEL_CHARS,
+);
+const vLabelText = new Map(vBars.map(({ bar }) => [bar.id, bar.label]));
+const fromTop = (value: number) => pct(100 - value);
+---
+
+<div class="chart-box chart-horizontal">
+  <div class="chart-grid">
+    {horizontal.map(({ lane, labels, height }) => (
+      <>
+        <div class="lane-name">{lane.label}</div>
+        <div class="lane-track" style={`height: ${height}px`}>
+          {chart.scale.gap && (
+            <div
+              class="chart-gap"
+              style={`left: ${pct(chart.scale.gap.startPct)}; width: ${pct(chart.scale.gap.endPct - chart.scale.gap.startPct)}`}
+            />
+          )}
+          {lane.bars.map((bar) => (
+            <a
+              class:list={[
+                "chart-bar",
+                `lane-${bar.lane}`,
+                { "chart-bar-joined": bar.abutsPrevious },
+              ]}
+              href={bar.href}
+              aria-label={bar.ariaLabel}
+              style={`left: ${pct(bar.left)}; width: ${pct(bar.width)}; top: ${BAR_TOP}px; height: ${BAR_HEIGHT}px`}
+            />
+          ))}
+          {labels.map((label) => {
+            const bar = lane.bars.find((candidate) => candidate.id === label.id);
+            if (label.position === "inside") {
+              return (
+                <span
+                  class="chart-label chart-label-inside"
+                  aria-hidden="true"
+                  style={`left: ${pct(label.offsetPct)}; width: ${pct(bar?.width ?? 0)}; top: ${INSIDE_TOP}px`}
+                >
+                  {label.text}
+                </span>
+              );
+            }
+            const side = label.align === "start" ? "left" : "right";
+            return (
+              <span
+                class="chart-label"
+                aria-hidden="true"
+                style={`${side}: ${pct(label.offsetPct)}; top: ${LABEL_TOP}px`}
+              >
+                {label.text}
+              </span>
+            );
+          })}
+          <div class="today-line" style={`left: ${pct(chart.todayPct)}`} />
+        </div>
+      </>
+    ))}
+    <div />
+    <div class="chart-axis" aria-hidden="true">
+      {chart.ticks.map((tick) => (
+        <span
+          class:list={["axis-tick", { "axis-break": tick.kind === "break" }]}
+          style={`left: ${pct(tick.pct)}`}
+        >
+          {tick.label}
+        </span>
+      ))}
+      <span class="axis-today" style={`left: ${pct(chart.todayPct)}`}>
+        Today
+      </span>
+    </div>
+  </div>
+</div>
+
+<div class="chart-box chart-vertical">
+  <div class="vchart" style={`height: ${V_HEIGHT}px`}>
+    {chart.scale.gap && (
+      <div
+        class="chart-gap vchart-gap"
+        style={`left: ${V_AXIS}px; width: ${chart.lanes.length * V_COLUMN}px; top: ${fromTop(chart.scale.gap.endPct)}; height: ${pct(chart.scale.gap.endPct - chart.scale.gap.startPct)}`}
+      />
+    )}
+    <div class="vchart-axis" style={`left: ${V_AXIS - 4}px`} />
+    <div aria-hidden="true">
+      {chart.ticks.map((tick) => (
+        <span
+          class:list={["vchart-tick", { "axis-break": tick.kind === "break" }]}
+          style={`top: ${fromTop(tick.pct)}; width: ${V_AXIS - 8}px`}
+        >
+          {tick.label}
+        </span>
+      ))}
+      <span class="vchart-tick axis-today" style={`top: ${fromTop(chart.todayPct)}`}>
+        Today
+      </span>
+    </div>
+    <div
+      class="today-line vchart-today"
+      style={`left: ${V_AXIS - 4}px; top: ${fromTop(chart.todayPct)}`}
+    />
+    {vBars.map(({ bar, x }) => (
+      <a
+        class:list={["chart-bar", `lane-${bar.lane}`, { "chart-bar-joined": bar.abutsPrevious }]}
+        href={bar.href}
+        aria-label={bar.ariaLabel}
+        style={`left: ${x}px; width: ${V_BAR}px; top: ${fromTop(bar.left + bar.width)}; height: ${pct(bar.width)}`}
+      />
+    ))}
+    {vLabels.map((label) => (
+      <span
+        class="chart-label vchart-label"
+        aria-hidden="true"
+        style={`left: ${vLabelLeft}px; top: ${label.topPx.toFixed(1)}px`}
+      >
+        {vLabelText.get(label.id)}
+      </span>
+    ))}
+  </div>
+  <ul class="chart-legend" aria-label="Lanes">
+    {chart.lanes.map((lane) => (
+      <li>
+        <span class:list={["legend-swatch", `lane-${lane.id}`]} aria-hidden="true" />
+        {lane.label}
+      </li>
+    ))}
+  </ul>
+</div>

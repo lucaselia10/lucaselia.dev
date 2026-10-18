@@ -1,0 +1,49 @@
+---
+import "@fontsource-variable/archivo/wdth.css";
+import SiteFooter from "../components/SiteFooter.astro";
+import SiteHeader from "../components/SiteHeader.astro";
+import { SITE_URL } from "../site-profile";
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  description: string;
+  home?: boolean;
+  /** True when this page has its own Ask box, so the Ask link stays on the page. */
+  askOnPage?: boolean;
+  /** Pages that should not be indexed, such as the 404 page. */
+  noindex?: boolean;
+}
+
+const { title, description, home = false, askOnPage = home, noindex = false } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site ?? SITE_URL).href;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    {noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={canonical} />}
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="sitemap" href="/sitemap-index.xml" />
+    <meta property="og:type" content={home ? "profile" : "website"} />
+    <meta property="og:site_name" content="Lucas Elia" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta name="theme-color" content="#e8ecf0" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">
+      Skip to content
+    </a>
+    <SiteHeader home={home} askOnPage={askOnPage} />
+    <main id="main">
+      <slot />
+    </main>
+    <SiteFooter />
+  </body>
+</html>
