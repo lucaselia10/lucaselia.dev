@@ -1,10 +1,14 @@
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ASK_QUESTION_MAX_LENGTH,
+  ASK_STREAM_TIMEOUT_MS,
   ASK_TIMEOUT_MS,
+  CONTENT_SHA256_HEADER,
   askCareerQuestion,
   consumeNdjson,
   safeCitationHref,
+  sha256Hex,
   streamCareerQuestion,
 } from "./ask-api";
 
@@ -207,10 +211,11 @@ describe("streamCareerQuestion", () => {
       () => undefined,
     );
 
-    expect(result).toMatchObject({
+    // The server's own text is never shown; the client maps the status.
+    expect(result).toEqual({
       ok: false,
-      kind: "api",
-      message: "Model answers are not configured.",
+      kind: "unavailable",
+      message: "The career assistant is temporarily unavailable.",
       requestId: "request-9",
     });
   });
@@ -229,6 +234,197 @@ describe("streamCareerQuestion", () => {
       ok: false,
       kind: "malformed",
     });
+  });
+});
+
+describe("production stream requests", () => {
+  it("hashes text to lowercase hex SHA-256", async () => {
+    expect(await sha256Hex(new TextEncoder().encode("abc"))).toBe(
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    );
+    expect(await sha256Hex(new Uint8Array())).toBe(
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    );
+  });
+
+  it("sends the exact body bytes with their SHA-256 for OAC", async () => {
+    const fetchImpl = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
+      ndjsonResponse([doneLine("Answer.")]),
+    );
+    const history = [
+      { role: "user" as const, content: "Earlier question, with “quotes” and é." },
+      { role: "assistant" as const, content: "Earlier answer." },
+    ];
+
+    await streamCareerQuestion(
+      { url: "/api/ask", question: "Next question?", history, fetchImpl },
+      () => undefined,
+    );
+
+    const [target, init] = fetchImpl.mock.calls[0] ?? [];
+    expect(target).toBe("/api/ask");
+    expect(init?.method).toBe("POST");
+    expect(init?.credentials).toBe("omit");
+    const body = init?.body;
+    // jsdom and Node have different Uint8Array classes, so check for a byte view.
+    expect(ArrayBuffer.isView(body)).toBe(true);
+    const bytes = body as Uint8Array;
+    const headers = init?.headers as Record<string, string>;
+    expect(headers[CONTENT_SHA256_HEADER]).toBe(createHash("sha256").update(bytes).digest("hex"));
+    expect(headers.Accept).toBe("application/x-ndjson");
+    expect(headers["Content-Type"]).toBe("application/json");
+    expect(JSON.parse(new TextDecoder().decode(bytes))).toEqual({
+      question: "Next question?",
+      mode: "career_question",
+      history,
+    });
+  });
+
+  it.each([
+    [400, {}, "invalid", "The question couldn't be sent. Please rephrase it and try again."],
+    [413, {}, "too_long", "The question is too long."],
+    [
+      429,
+      { code: "rate_limited" },
+      "rate_limited",
+      "Too many questions in a short time. Please wait a few minutes.",
+    ],
+    [429, { code: "busy" }, "busy", "The career assistant is busy. Please try again in a minute."],
+    [429, null, "busy", "The career assistant is busy. Please try again in a minute."],
+    [
+      503,
+      { code: "paused" },
+      "paused",
+      "The career assistant is paused for now. The career pages are still here.",
+    ],
+    [
+      503,
+      { code: "unavailable" },
+      "unavailable",
+      "The career assistant is temporarily unavailable.",
+    ],
+    [502, null, "unavailable", "The career assistant is temporarily unavailable."],
+    [504, null, "unavailable", "The career assistant is temporarily unavailable."],
+    [403, null, "unavailable", "The career assistant is temporarily unavailable."],
+    [404, null, "unavailable", "The career assistant is temporarily unavailable."],
+  ] as const)(
+    "maps HTTP %i %j to %s without showing server text",
+    async (status, body, kind, message) => {
+      const raw =
+        body === null
+          ? new Response("<html>CloudFront error</html>", {
+              status,
+              headers: { "Content-Type": "text/html" },
+            })
+          : jsonResponse({ ...body, message: "server wording", requestId: "req-1" }, status);
+      const result = await streamCareerQuestion(
+        { url: "/api/ask", question: "Hello", fetchImpl: vi.fn(async () => raw) },
+        () => undefined,
+      );
+
+      expect(result).toMatchObject({ ok: false, kind, message });
+      expect(JSON.stringify(result)).not.toContain("server wording");
+      expect(JSON.stringify(result)).not.toContain("CloudFront");
+    },
+  );
+
+  it.each([
+    ["validation", "validation", "The answer could not be verified and was discarded."],
+    ["interrupted", "interrupted", "The response was interrupted. Please try again."],
+    ["timeout", "timeout", "The request timed out. Please try again."],
+    [
+      "paused",
+      "paused",
+      "The career assistant is paused for now. The career pages are still here.",
+    ],
+    ["busy", "busy", "The career assistant is busy. Please try again in a minute."],
+    ["unavailable", "unavailable", "The career assistant is temporarily unavailable."],
+    ["something-new", "unavailable", "The career assistant is temporarily unavailable."],
+  ] as const)("maps a stream error %s to its own message", async (code, kind, message) => {
+    const event = { type: "error", code, message: "server wording", requestId: "req-2" };
+    const result = await streamCareerQuestion(
+      {
+        url: "/api/ask",
+        question: "Hello",
+        fetchImpl: vi.fn(async () =>
+          ndjsonResponse(['{"type":"delta","text":"Part"}\n', `${JSON.stringify(event)}\n`]),
+        ),
+      },
+      () => undefined,
+    );
+
+    expect(result).toEqual({ ok: false, kind, message, requestId: "req-2" });
+  });
+
+  it("treats a 200 that is not NDJSON as malformed, and a dropped connection as network", async () => {
+    const html = await streamCareerQuestion(
+      {
+        url: "/api/ask",
+        question: "Hello",
+        fetchImpl: vi.fn(
+          async () => new Response("<html></html>", { headers: { "Content-Type": "text/html" } }),
+        ),
+      },
+      () => undefined,
+    );
+    expect(html).toMatchObject({ kind: "malformed" });
+
+    const offline = await streamCareerQuestion(
+      {
+        url: "/api/ask",
+        question: "Hello",
+        fetchImpl: vi.fn(async () => {
+          throw new TypeError("Failed to fetch");
+        }),
+      },
+      () => undefined,
+    );
+    expect(offline).toEqual({
+      ok: false,
+      kind: "network",
+      message: "The career assistant could not be reached.",
+    });
+  });
+
+  it("refuses a question over 500 characters before sending anything", async () => {
+    const fetchImpl = vi.fn();
+    const result = await streamCareerQuestion(
+      { url: "/api/ask", question: "x".repeat(501), fetchImpl },
+      () => undefined,
+    );
+    expect(result).toMatchObject({ kind: "too_long" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(ASK_QUESTION_MAX_LENGTH).toBe(500);
+  });
+
+  it("aborts an in-flight stream when the caller's signal aborts, and times out at 45 s", async () => {
+    let seen: AbortSignal | undefined;
+    const controller = new AbortController();
+    const pending = streamCareerQuestion(
+      {
+        url: "/api/ask",
+        question: "Hello",
+        signal: controller.signal,
+        fetchImpl: vi.fn(
+          (_url: RequestInfo | URL, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              seen = init?.signal ?? undefined;
+              seen?.addEventListener("abort", () => {
+                reject(new DOMException("aborted", "AbortError"));
+              });
+            }),
+        ),
+      },
+      () => undefined,
+    );
+    await vi.waitFor(() => {
+      expect(seen).toBeDefined();
+    });
+    controller.abort();
+
+    expect(await pending).toMatchObject({ kind: "cancelled" });
+    expect(seen?.aborted).toBe(true);
+    expect(ASK_STREAM_TIMEOUT_MS).toBe(45_000);
   });
 });
 

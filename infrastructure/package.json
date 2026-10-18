@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "synth": "pnpm -w prepare:api && pnpm -w prepare:web-adapter && cdk synth --app 'tsx bin/site.ts' --output cdk.out.site -c siteHostedZoneId=Z0PLACEHOLDER0ZONE --all",
+    "synth": "pnpm -w prepare:api && pnpm -w prepare:web-adapter --stub && cdk synth --app 'tsx bin/site.ts' --output cdk.out.site -c siteHostedZoneId=Z0PLACEHOLDER0ZONE -c webAdapterStub=allow --all",
     "typecheck": "tsc --noEmit",
     "test": "pnpm -w prepare:api && vitest run",
     "synth:site": "pnpm -w prepare:api && pnpm -w prepare:web-adapter && cdk synth --app 'tsx bin/site.ts' --output cdk.out.site -c siteHostedZoneId=${SITE_HOSTED_ZONE_ID:?Set SITE_HOSTED_ZONE_ID to the Route 53 hosted zone id for lucaselia.dev} --all",

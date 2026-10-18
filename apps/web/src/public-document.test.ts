@@ -1,9 +1,15 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { citationUrl } from "@career-portfolio/content";
 import { createSatteriMarkdownProcessor } from "@astrojs/markdown-satteri";
 import { beforeAll, describe, expect, it } from "vitest";
+import {
+  CONTENT_SECURITY_POLICY,
+  INLINE_SCRIPT_HASHES,
+  INLINE_STYLE_HASHES,
+} from "../../../infrastructure/lib/site-headers";
 import { citationHeadingIds } from "./citation-heading-ids";
 
 // Two builds, one after the other (they share generated files): the development profile
@@ -292,7 +298,7 @@ describe("production site build", () => {
   const text = (path: string) => readFileSync(path, "utf8");
   const pages = () => files(site()).filter((path) => path.endsWith(".html"));
 
-  it("ships no fixture, no career index, and no assistant", () => {
+  it("ships the assistant, and no fixture or career index", () => {
     expect(existsSync(site("work"))).toBe(false);
     expect(existsSync(site("career-index.json"))).toBe(false);
     for (const path of files(site())) {
@@ -302,25 +308,65 @@ describe("production site build", () => {
     }
     for (const path of pages()) {
       const html = text(path);
-      expect(html, path).not.toContain("<script");
-      expect(html, path).not.toContain("<astro-island");
-      expect(html, path).not.toContain("<style");
-      expect(html, path).not.toContain('id="ask"');
-      expect(html, path).not.toContain("Ask about");
-      expect(html, path).not.toMatch(/<a href="[^"]*#ask">Ask<\/a>/);
       expect(html, path).not.toContain("no API URL is configured");
+      expect(html, path).not.toMatch(/Tokens:|Estimated cost/);
+      expect(html, path).toMatch(/<a href="[^"]*#ask">Ask<\/a>/);
+    }
+    const home = text(site("index.html"));
+    expect(home).toContain('<section id="ask"');
+    expect(home).toContain("&quot;askApiUrl&quot;:[0,&quot;/api/ask&quot;]");
+    expect(home).toContain("&quot;modelStreaming&quot;:[0,true]");
+    expect(home).toContain("&quot;developmentDetails&quot;:[0,false]");
+    expect(text(site("experience", "aws-sde-ii", "index.html"))).toContain("Ask about this role");
+    expect(text(site("404.html"))).not.toContain("<astro-island");
+  });
+
+  it("has only inline scripts and styles whose hashes the CSP allows", () => {
+    // The CSP pins the island's inline scripts by hash. If Astro changes them, this fails
+    // here (and the site build check refuses to deploy) instead of browsers blocking them.
+    const allowed = new Set<string>(INLINE_SCRIPT_HASHES);
+    const seen = new Set<string>();
+    for (const path of pages()) {
+      for (const match of text(path).matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)) {
+        const content = match[2] ?? "";
+        if (/\ssrc=/.test(match[1] ?? "")) {
+          expect(match[1], path).toMatch(/src="\/_astro\/[^"]+\.js"/);
+          continue;
+        }
+        const hash = `sha256-${createHash("sha256").update(content, "utf8").digest("base64")}`;
+        expect(allowed.has(hash), `${path}: ${hash}`).toBe(true);
+        seen.add(hash);
+      }
+    }
+    expect([...seen].sort()).toEqual([...allowed].sort());
+    const styles = new Set<string>();
+    for (const path of pages()) {
+      for (const match of text(path).matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/g)) {
+        styles.add(
+          `sha256-${createHash("sha256")
+            .update(match[1] ?? "", "utf8")
+            .digest("base64")}`,
+        );
+      }
+    }
+    expect([...styles].sort()).toEqual([...INLINE_STYLE_HASHES].sort());
+    for (const hash of [...INLINE_SCRIPT_HASHES, ...INLINE_STYLE_HASHES]) {
+      expect(CONTENT_SECURITY_POLICY).toContain(`'${hash}'`);
     }
   });
 
-  it("renders the single-column hero and the contact band", () => {
+  it("renders the hero with the assistant beside it, and the contact band", () => {
     const html = text(site("index.html"));
     const visible = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
-    expect(html).toContain('class="page-width hero hero-solo"');
+    expect(html).toContain('class="page-width hero"');
+    expect(html).toContain('<div class="hero-ask">');
     expect(html).toMatch(
-      /<a class="button button-primary" href="#career">\s*See my career\s*<\/a>/,
+      /<a class="button button-primary" href="#ask">\s*Ask about my work\s*<\/a>/,
     );
-    expect(html).toMatch(/<a class="button button-secondary" href="#contact">\s*Contact\s*<\/a>/);
+    expect(html).toMatch(
+      /<a class="button button-secondary" href="#career">\s*See my career\s*<\/a>/,
+    );
     expect(html).toContain('<section id="contact" class="contact"');
     expect(visible).toContain(
       "The best way to reach me is email. I’m also on LinkedIn and GitHub.",

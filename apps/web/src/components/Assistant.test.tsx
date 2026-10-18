@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ASK_TIMEOUT_MS } from "../ask-api";
-import Assistant, { shouldFollowTranscript } from "./Assistant";
+import Assistant, { DEFAULT_INTRO, PRIVACY_NOTE, shouldFollowTranscript } from "./Assistant";
 
 const apiUrl = "http://127.0.0.1:8787/ask";
 
@@ -49,7 +49,7 @@ describe("Assistant", () => {
     fireEvent.click(screen.getByRole("button", { name: "What have you built at AWS?" }));
 
     await screen.findByText("Built planning systems.");
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+    expect(sentJson(fetchMock.mock.calls[0]?.[1]?.body)).toEqual({
       question: "What have you built at AWS?",
       mode: "career_question",
     });
@@ -75,7 +75,7 @@ describe("Assistant", () => {
     );
 
     await screen.findByText("Platform answer.");
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+    expect(sentJson(fetchMock.mock.calls[0]?.[1]?.body)).toEqual({
       question: "What does the capacity-planning platform do?",
       mode: "career_question",
     });
@@ -159,7 +159,7 @@ describe("Assistant", () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+    expect(sentJson(fetchMock.mock.calls[1]?.[1]?.body)).toEqual({
       question: "How long has he been in that role?",
       mode: "career_question",
       history: [
@@ -291,6 +291,10 @@ describe("Assistant", () => {
     submit("What is Lucas's current role?");
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -406,7 +410,7 @@ describe("Assistant", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByText("Verified answer.")).toBeTruthy();
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+    expect(sentJson(fetchMock.mock.calls[1]?.[1]?.body)).toEqual({
       question: "What is Lucas's current role?",
       mode: "career_question",
     });
@@ -418,6 +422,10 @@ describe("Assistant", () => {
     submit("What is Lucas's current role?");
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -434,6 +442,143 @@ describe("Assistant", () => {
     await waitFor(() => {
       expect(signal?.aborted).toBe(true);
     });
+  });
+});
+
+describe("Assistant in production", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows a character counter and limits questions to 500 characters", () => {
+    render(<Assistant askApiUrl="/api/ask" modelStreaming />);
+    const field = screen.getByLabelText("Your question");
+    expect(field.getAttribute("maxlength")).toBe("500");
+    expect(field.getAttribute("aria-describedby")).toBe("question-count");
+    expect(screen.getByText("0 / 500 characters")).toBeTruthy();
+    fireEvent.change(field, { target: { value: "Where is he based?" } });
+    expect(screen.getByText("18 / 500 characters")).toBeTruthy();
+  });
+
+  it("never shows token counts or cost unless development details are on", async () => {
+    const done = {
+      type: "done",
+      answer: "Answer.",
+      citations: [],
+      requestId: "request-1",
+      fixture: false,
+      usage: { inputTokens: 11, outputTokens: 7 },
+      estimatedCostUsd: "0.000046",
+    };
+    stubFetch(async () => ndjsonResponse([`${JSON.stringify(done)}\n`]));
+    const production = render(<Assistant askApiUrl="/api/ask" modelStreaming />);
+    submit("What is Lucas's current role?");
+    expect(await screen.findByText("Answer.")).toBeTruthy();
+    expect(screen.queryByText(/Tokens:/)).toBeNull();
+    expect(screen.queryByText(/Estimated cost/)).toBeNull();
+    production.unmount();
+
+    stubFetch(async () => ndjsonResponse([`${JSON.stringify(done)}\n`]));
+    render(<Assistant askApiUrl={apiUrl} modelStreaming developmentDetails />);
+    submit("What is Lucas's current role?");
+    expect(await screen.findByText("Tokens: 11 in, 7 out")).toBeTruthy();
+    expect(screen.getByText("Estimated cost: $0.000046")).toBeTruthy();
+  });
+
+  it("disables Send while an answer is in flight", async () => {
+    stubFetch(() => new Promise<Response>(() => undefined));
+    render(<Assistant askApiUrl="/api/ask" modelStreaming />);
+    submit("What is Lucas's current role?");
+    fireEvent.change(screen.getByLabelText("Your question"), { target: { value: "Another?" } });
+    expect(disabled("Send")).toBe(true);
+  });
+
+  it.each([
+    [400, { code: undefined }, "The question couldn't be sent. Please rephrase it and try again."],
+    [413, {}, "The question is too long."],
+    [
+      429,
+      { code: "rate_limited" },
+      "Too many questions in a short time. Please wait a few minutes.",
+    ],
+    [429, { code: "busy" }, "The career assistant is busy. Please try again in a minute."],
+    [503, { code: "unavailable" }, "The career assistant is temporarily unavailable."],
+  ] as const)(
+    "shows the message for HTTP %i %j and offers a retry",
+    async (status, body, message) => {
+      stubFetch(async () =>
+        jsonResponse({ ...body, message: "server wording", requestId: "r-1" }, status),
+      );
+      render(<Assistant askApiUrl="/api/ask" modelStreaming />);
+      submit("What is Lucas's current role?");
+
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toBe(`${message} Reference: r-1`);
+      expect(alert.textContent).not.toContain("server wording");
+      expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    },
+  );
+
+  it("stops for the visit when the assistant is paused", async () => {
+    stubFetch(async () =>
+      jsonResponse({ code: "paused", message: "server wording", requestId: "r-2" }, 503),
+    );
+    render(<Assistant askApiUrl="/api/ask" modelStreaming />);
+    submit("What is Lucas's current role?");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(
+      "The career assistant is paused for now. The career pages are still here.",
+    );
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect((screen.getByLabelText("Your question") as HTMLTextAreaElement).disabled).toBe(true);
+    expect(disabled("Send")).toBe(true);
+  });
+
+  it("shows the network and timeout messages without raw error text", async () => {
+    stubFetch(async () => {
+      throw new TypeError("Failed to fetch: net::ERR_INTERNET_DISCONNECTED");
+    });
+    render(<Assistant askApiUrl="/api/ask" modelStreaming />);
+    submit("What is Lucas's current role?");
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("The career assistant could not be reached.");
+  });
+
+  it("aborts the answer in flight when the visitor leaves the page", async () => {
+    let signal: AbortSignal | undefined;
+    stubFetch((_url, init) => {
+      signal = init?.signal ?? undefined;
+      return new Promise<Response>(() => undefined);
+    });
+    render(<Assistant askApiUrl="/api/ask" modelStreaming />);
+    submit("What is Lucas's current role?");
+    await waitFor(() => {
+      expect(signal).toBeDefined();
+    });
+
+    window.dispatchEvent(new Event("pagehide"));
+    expect(signal?.aborted).toBe(true);
+  });
+});
+
+describe("Assistant intro", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("puts the privacy note under the panel intro", () => {
+    render(<Assistant askApiUrl="/api/ask" modelStreaming />);
+    const intro = screen.getByText(DEFAULT_INTRO);
+    const note = screen.getByText("Questions and answers aren't saved.");
+    expect(PRIVACY_NOTE).toBe("Questions and answers aren't saved.");
+    expect(intro.nextElementSibling).toBe(note);
+  });
+
+  it("leaves the compact role-page panel without an intro or note", () => {
+    render(<Assistant askApiUrl="/api/ask" modelStreaming variant="compact" />);
+    expect(screen.queryByText(PRIVACY_NOTE)).toBeNull();
   });
 });
 
@@ -497,5 +642,12 @@ function ndjsonResponse(chunks: string[]): Response {
       },
     }),
     { status: 200, headers: { "Content-Type": "application/x-ndjson" } },
+  );
+}
+
+/** The JSON a request sent: a string on the JSON path, the exact bytes on the stream path. */
+function sentJson(body: unknown): unknown {
+  return JSON.parse(
+    ArrayBuffer.isView(body) ? new TextDecoder().decode(body as Uint8Array) : String(body),
   );
 }

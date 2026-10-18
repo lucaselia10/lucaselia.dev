@@ -2,7 +2,7 @@
 
 This document describes the career portfolio as it exists in the repository today. It is the current integrated picture. Architectural choices stay in the [ADR index](adr/README.md). Planned work stays in the [roadmap](roadmap.md). How the design got here is in [design history](design-history.md).
 
-The static site is live at `https://lucaselia.dev` on S3 and CloudFront, without the assistant ([ADR-007](adr/007-static-site-hosting.md)). The production assistant ([ADR-009](adr/009-production-assistant.md), Proposed) is built and synthesized but not deployed: a streaming Lambda function URL behind the same CloudFront distribution at `/api/*`. The production build still leaves the assistant UI out.
+The static site is live at `https://lucaselia.dev` on S3 and CloudFront, without the assistant ([ADR-007](adr/007-static-site-hosting.md)). The production assistant ([ADR-009](adr/009-production-assistant.md), Proposed) is built and synthesized but not deployed: a streaming Lambda function URL behind the same CloudFront distribution at `/api/*`. The production build (`pnpm build:site`) includes the assistant, which posts to `/api/ask`; the next deploy turns it on.
 
 ## Purpose and audience
 
@@ -67,7 +67,7 @@ Tracked source is `content/public`, the schemas in `schemas/`, and the generator
 3. `pnpm index:content` writes `generated/career-index.json`; `pnpm sync:content` copies it to the site and to the Python package ([ADR-003](adr/003-bundle-career-index-with-lambda.md)).
 4. `pnpm build:retrieval` writes the evidence package: one `.txt` file and one `.txt.metadata.json` sidecar per assistant-retrievable H2 section, plus `generated/retrieval-manifest.json`. Each text file has title, type, summary, and section lines, a `Facts:` block of labeled front matter, then the section body. Documents with `assistant_retrievable: false`, including `fictional-lumen-harbor.md`, stay out.
 5. `pnpm prepare:api` validates, indexes, synchronizes, builds the evidence package, and stages `infrastructure/asset/ask-api`: the `ask_api` package (with the career index and evidence package under `ask_api/data/`), `run.sh` at the root, and the runtime dependencies pinned in `services/ask-api/uv.lock`. boto3 is not staged; the Python 3.13 runtime provides it ([ADR-009](adr/009-production-assistant.md)).
-6. `pnpm prepare:web-adapter` writes `infrastructure/asset/web-adapter-layer`: the Lambda Web Adapter binary, read anonymously from its public image and checked against a pinned manifest digest, layer digests, and binary SHA-256, plus the layer's `bootstrap`.
+6. `pnpm prepare:web-adapter` writes `infrastructure/asset/web-adapter-layer`: the Lambda Web Adapter binary, read anonymously from its public image (with retries) and checked against a pinned manifest digest, layer digests, and binary SHA-256, plus the layer's `bootstrap`. `--stub` writes a non-deployable placeholder for offline CI synthesis; the site app accepts it only with `-c webAdapterStub=allow`.
 
 The current public corpus is the profile, five experience documents, two education documents, and the fictional Lumen Harbor project. Eight real documents are assistant-retrievable.
 
@@ -100,6 +100,7 @@ The local exact-answer handler (`ask_api.handler`, the development server's defa
 - No reserved concurrency; the account's concurrency limit caps the function. The kill switch is reserved concurrency 0 ([runbook](design/production-assistant.md#runbook)).
 - The Anthropic key is read from Secrets Manager at cold start and is never logged or returned.
 - Logs: one line per request with request id, outcome, status, token counts, and latency. No question, answer, prompt, history, body, IP, or key. WAF sampled requests are off. CloudFront access logs are off.
+- The site's CSP allows scripts only from the site plus Astro's two inline island scripts by hash, one inline island style by hash, and fetches only to the site. The site build check and a build test fail if the built pages and the pinned hashes disagree.
 - The repository contains no credentials or account identifiers; `pnpm check:public` scans every file that would be committed.
 
 ## Testing strategy
@@ -108,7 +109,7 @@ The local exact-answer handler (`ask_api.handler`, the development server's defa
 - Vitest covers `packages/content`, `apps/web`, `scripts` (including staging and the adapter fetch, against a fake registry), and both CDK stacks (synthesized in-process).
 - Pytest covers the exact-answer handler, the answer stream, the providers (including the real Anthropic SDK over a mock transport), the production app over a real loopback socket, and the secret loader.
 - `tests/evaluation/cases.json` records route expectations; live model runs are recorded in the [evaluation notes](../tests/evaluation/README.md).
-- Unit tests make no AWS or model calls. `pnpm synth` and CI synthesize with a placeholder hosted zone id and look nothing up.
+- Unit tests make no AWS or model calls. `pnpm synth` and CI synthesize offline with a placeholder hosted zone id and a stub adapter layer; nothing is fetched or looked up.
 
 ## Current deployment state
 

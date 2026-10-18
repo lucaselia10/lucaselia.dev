@@ -1,5 +1,10 @@
-export const ASK_QUESTION_MAX_LENGTH = 8000;
+/** The production API refuses longer questions (ADR-009). */
+export const ASK_QUESTION_MAX_LENGTH = 500;
 export const ASK_TIMEOUT_MS = 31_000;
+/** Covers a cold start on top of the server's own 31-second stream deadline. */
+export const ASK_STREAM_TIMEOUT_MS = 45_000;
+/** CloudFront's OAC signs POST bodies for the function URL with this hash (ADR-009). */
+export const CONTENT_SHA256_HEADER = "x-amz-content-sha256";
 
 const SAFE_CITATION_PREFIXES = ["/profile/", "/experience/", "/background/", "/work/"] as const;
 
@@ -27,7 +32,44 @@ export type AskSuccess = {
   estimatedCostUsd?: string;
 };
 
-export type AskFailureKind = "api" | "network" | "timeout" | "malformed" | "cancelled";
+export type AskFailureKind =
+  | "api"
+  | "invalid"
+  | "too_long"
+  | "rate_limited"
+  | "busy"
+  | "paused"
+  | "unavailable"
+  | "validation"
+  | "interrupted"
+  | "network"
+  | "timeout"
+  | "malformed"
+  | "cancelled";
+
+/**
+ * What the visitor reads for each streaming failure. The client owns this text: server and
+ * CloudFront error bodies are never shown. Most strings match the server's own messages.
+ */
+export const FAILURE_MESSAGES: Record<Exclude<AskFailureKind, "api">, string> = {
+  invalid: "The question couldn't be sent. Please rephrase it and try again.",
+  too_long: "The question is too long.",
+  rate_limited: "Too many questions in a short time. Please wait a few minutes.",
+  busy: "The career assistant is busy. Please try again in a minute.",
+  paused: "The career assistant is paused for now. The career pages are still here.",
+  unavailable: "The career assistant is temporarily unavailable.",
+  validation: "The answer could not be verified and was discarded.",
+  interrupted: "The response was interrupted. Please try again.",
+  network: "The career assistant could not be reached.",
+  timeout: "The request timed out. Please try again.",
+  malformed: "The career assistant returned an unexpected response.",
+  cancelled: "The request was cancelled.",
+};
+
+/** Failures where trying the same question again cannot help during this visit. */
+export function isFinalFailure(kind: AskFailureKind): boolean {
+  return kind === "paused";
+}
 
 export type AskFailure = {
   ok: false;
@@ -150,11 +192,11 @@ export async function streamCareerQuestion(
     return { ok: false, kind: "api", message: "Enter a question." };
   }
   if (question.length > ASK_QUESTION_MAX_LENGTH) {
-    return { ok: false, kind: "api", message: "The question is too long." };
+    return failure("too_long");
   }
 
   const controller = new AbortController();
-  const timeoutMs = request.timeoutMs ?? ASK_TIMEOUT_MS;
+  const timeoutMs = request.timeoutMs ?? ASK_STREAM_TIMEOUT_MS;
   let reason: "timeout" | "cancelled" | null = null;
   const stopExternalAbort = bindAbort(request.signal, () => {
     if (reason === null) {
@@ -168,37 +210,81 @@ export async function streamCareerQuestion(
   }, timeoutMs);
 
   try {
+    // Serialize once, hash those exact bytes, and send the same bytes.
+    const body = new TextEncoder().encode(
+      JSON.stringify({
+        question,
+        mode: "career_question",
+        ...(request.history && request.history.length > 0 ? { history: request.history } : {}),
+      }),
+    );
+    const bodyHash = await sha256Hex(body);
     const response = await (request.fetchImpl ?? fetch)(request.url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/x-ndjson",
+        [CONTENT_SHA256_HEADER]: bodyHash,
       },
-      body: JSON.stringify({
-        question,
-        mode: "career_question",
-        ...(request.history && request.history.length > 0 ? { history: request.history } : {}),
-      }),
+      body,
       signal: controller.signal,
       credentials: "omit",
     });
+    if (!response.ok) {
+      return statusFailure(response.status, await readJson(response));
+    }
     const contentType = response.headers.get("Content-Type") ?? "";
-    if (contentType.includes("application/json") || !response.ok) {
-      return errorResult(await readJson(response));
+    if (!contentType.includes("application/x-ndjson")) {
+      return failure("malformed");
     }
     return await readEventStream(response, onDelta);
   } catch {
     if (reason === "timeout") {
-      return { ok: false, kind: "timeout", message: "The request timed out. Please try again." };
+      return failure("timeout");
     }
     if (reason === "cancelled") {
-      return { ok: false, kind: "cancelled", message: "The request was cancelled." };
+      return failure("cancelled");
     }
-    return { ok: false, kind: "network", message: "The career assistant could not be reached." };
+    return failure("network");
   } finally {
     clearTimeout(timer);
     stopExternalAbort();
   }
+}
+
+/** Lowercase hex SHA-256, as the x-amz-content-sha256 header expects. */
+export async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** A failure response before the stream starts, mapped by HTTP status and the body's code. */
+export function statusFailure(status: number, body: unknown): AskFailure {
+  const code = isRecord(body) && typeof body.code === "string" ? body.code : undefined;
+  const requestId =
+    isRecord(body) && typeof body.requestId === "string" ? body.requestId : undefined;
+  if (status === 400) {
+    return failure("invalid", requestId);
+  }
+  if (status === 413) {
+    return failure("too_long", requestId);
+  }
+  if (status === 429) {
+    return failure(code === "rate_limited" ? "rate_limited" : "busy", requestId);
+  }
+  if (status === 503 && code === "paused") {
+    return failure("paused", requestId);
+  }
+  return failure("unavailable", requestId);
+}
+
+function failure(kind: Exclude<AskFailureKind, "api">, requestId?: string): AskFailure {
+  return {
+    ok: false,
+    kind,
+    message: FAILURE_MESSAGES[kind],
+    ...(requestId ? { requestId } : {}),
+  };
 }
 
 async function readEventStream(
@@ -207,11 +293,7 @@ async function readEventStream(
 ): Promise<AskResult> {
   const reader = response.body?.getReader();
   if (reader === undefined) {
-    return {
-      ok: false,
-      kind: "malformed",
-      message: "The career assistant returned an unexpected response.",
-    };
+    return failure("malformed");
   }
   const decoder = new TextDecoder();
   let buffer = "";
@@ -231,11 +313,7 @@ async function readEventStream(
           }
         });
       } catch {
-        return {
-          ok: false,
-          kind: "malformed",
-          message: "The career assistant returned an unexpected response.",
-        };
+        return failure("malformed");
       }
     }
   } finally {
@@ -245,17 +323,9 @@ async function readEventStream(
     return completed;
   }
   if (buffer.trim() !== "") {
-    return {
-      ok: false,
-      kind: "malformed",
-      message: "The career assistant returned an unexpected response.",
-    };
+    return failure("malformed");
   }
-  return {
-    ok: false,
-    kind: "network",
-    message: "The response was interrupted. Please try again.",
-  };
+  return failure("interrupted");
 }
 
 function applyStreamEvent(event: unknown, onDelta: (text: string) => void): AskResult | null {
@@ -328,22 +398,20 @@ function parseUsage(value: unknown): AskUsage | undefined {
   return { inputTokens: value.inputTokens, outputTokens: value.outputTokens };
 }
 
+/** A stream `error` event, mapped by its code. The event's own message is not shown. */
 function streamFailure(event: Record<string, unknown>): AskFailure {
-  const message =
-    typeof event.message === "string" && event.message.trim() !== ""
-      ? event.message
-      : "The career assistant returned an unexpected response.";
   const requestId = typeof event.requestId === "string" ? event.requestId : undefined;
-  if (event.code === "timeout") {
-    return { ok: false, kind: "timeout", message, requestId };
-  }
-  if (event.code === "cancelled") {
-    return { ok: false, kind: "cancelled", message, requestId };
-  }
-  if (event.code === "malformed") {
-    return { ok: false, kind: "malformed", message, requestId };
-  }
-  return { ok: false, kind: "api", message, requestId };
+  const byCode: Partial<Record<string, Exclude<AskFailureKind, "api">>> = {
+    timeout: "timeout",
+    cancelled: "cancelled",
+    validation: "validation",
+    interrupted: "interrupted",
+    paused: "paused",
+    busy: "busy",
+    malformed: "malformed",
+  };
+  const kind = typeof event.code === "string" ? byCode[event.code] : undefined;
+  return failure(kind ?? "unavailable", requestId);
 }
 
 function bindAbort(signal: AbortSignal | undefined, abort: () => void): () => void {

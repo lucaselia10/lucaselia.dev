@@ -8,7 +8,7 @@ This is the source for my career portfolio. The site is a static record of my ro
 
 - **Grounded answers with citations and refusals.** The assistant answers only from approved public sections. Every answer ends with a hidden `SOURCES:` line, and citations are checked against the evidence package before they reach the page. Questions the pages do not cover get one fixed refusal sentence. A partial question gets the supported part and a short statement of the gap.
 - **A provider interface.** `ask_api.model_providers` defines one request type, one stream-event type, and a `ModelProvider` protocol. The Anthropic API and Amazon Bedrock are interchangeable behind it, and a test runs the same conversation through both and requires identical events ([ADR-008](docs/adr/008-anthropic-api-for-model-answers.md)).
-- **A CDK site stack with a strict CSP.** `PortfolioSiteStack` serves the site from a private S3 bucket through CloudFront with Origin Access Control, ACM, and Route 53. The response headers include HSTS and a Content-Security-Policy that starts from `default-src 'none'` and allows no scripts at all (`script-src 'none'`). A browser test loads every page under that exact policy ([ADR-007](docs/adr/007-static-site-hosting.md)).
+- **A CDK site stack with a strict CSP.** `PortfolioSiteStack` serves the site from a private S3 bucket through CloudFront with Origin Access Control, ACM, and Route 53. The Content-Security-Policy starts from `default-src 'none'`, allows scripts only from the site plus Astro's two inline island scripts by exact hash, and fetches only from the site. A build check and a browser test fail if the built HTML and the policy ever disagree ([ADR-007](docs/adr/007-static-site-hosting.md), [ADR-009](docs/adr/009-production-assistant.md)).
 - **A test suite.** Vitest, Pytest, and Playwright with axe cover content validation, citation routes, the answer pipeline, both model providers (with the real SDKs over mocked transports), the synthesized CloudFormation, and accessibility. No test calls AWS or a paid model.
 - **An evaluation with hallucination probes.** [tests/evaluation](tests/evaluation/README.md) holds route expectations and the recorded live runs. The probes include an off-topic question and a fictional project, Lumen Harbor, that is public on the site but excluded from the assistant's evidence. The assistant must refuse both.
 
@@ -16,7 +16,7 @@ This is the source for my career portfolio. The site is a static record of my ro
 
 | Part                 | State                                                                                                                                                               |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Static site          | Live at [lucaselia.dev](https://lucaselia.dev), without the assistant.                                                                                              |
+| Static site          | Live at [lucaselia.dev](https://lucaselia.dev), without the assistant until the next deploy.                                                                        |
 | Assistant            | Runs locally. A live local evaluation on Claude Haiku 4.5 has been run and recorded.                                                                                |
 | Production assistant | Built and synthesized, not deployed: a streaming Lambda function URL behind CloudFront `/api/*` with OAC and WAF ([ADR-009](docs/adr/009-production-assistant.md)). |
 | CI                   | GitHub Actions runs format, lint, type, test, content, build, synth, and public-safety checks. It never deploys.                                                    |
@@ -62,20 +62,20 @@ pnpm install
 uv sync --directory services/ask-api
 ```
 
-| Command                    | What it does                                                                                                  |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `pnpm dev:api`             | Build the career index and start the local ask server on `127.0.0.1:8787`.                                    |
-| `pnpm dev:web`             | Start the site on `127.0.0.1:4321`, pointed at the local ask server.                                          |
-| `pnpm dev:api:prod`        | Run the production ask app as Lambda runs it, on `127.0.0.1:8080/api/ask`, with the fixture provider.         |
-| `pnpm build:site`          | Build the production site (no assistant) into `apps/web/dist`.                                                |
-| `pnpm format:check`        | Check formatting (Prettier and Ruff).                                                                         |
-| `pnpm lint`                | Lint TypeScript (ESLint) and Python (Ruff).                                                                   |
-| `pnpm typecheck`           | Type-check the web app, CDK, scripts, and Python (pyright).                                                   |
-| `pnpm test`                | Run Vitest and Pytest.                                                                                        |
-| `pnpm test:browser`        | Run Playwright and axe against the development and production builds.                                         |
-| `pnpm check:public`        | Scan the files that would be published for account IDs, home paths, internal hosts, and keys.                 |
-| `pnpm synth`               | Build the production site and synthesize both stacks with a placeholder hosted zone id. It does not call AWS. |
-| `pnpm prepare:web-adapter` | Fetch and verify the pinned Lambda Web Adapter binary for the function's layer.                               |
+| Command                    | What it does                                                                                                                              |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm dev:api`             | Build the career index and start the local ask server on `127.0.0.1:8787`.                                                                |
+| `pnpm dev:web`             | Start the site on `127.0.0.1:4321`, pointed at the local ask server.                                                                      |
+| `pnpm dev:api:prod`        | Run the production ask app as Lambda runs it, on `127.0.0.1:8080/api/ask`, with the fixture provider.                                     |
+| `pnpm build:site`          | Build the production site (with the assistant on `/api/ask`, no fixture) into `apps/web/dist`.                                            |
+| `pnpm format:check`        | Check formatting (Prettier and Ruff).                                                                                                     |
+| `pnpm lint`                | Lint TypeScript (ESLint) and Python (Ruff).                                                                                               |
+| `pnpm typecheck`           | Type-check the web app, CDK, scripts, and Python (pyright).                                                                               |
+| `pnpm test`                | Run Vitest and Pytest.                                                                                                                    |
+| `pnpm test:browser`        | Run Playwright and axe against the development and production builds.                                                                     |
+| `pnpm check:public`        | Scan the files that would be published for account IDs, home paths, internal hosts, and keys.                                             |
+| `pnpm synth`               | Build the production site and synthesize both stacks offline, with a placeholder hosted zone id and a stub adapter layer. Not deployable. |
+| `pnpm prepare:web-adapter` | Fetch and verify the pinned Lambda Web Adapter binary for the function's layer. Run before diff or deploy; CI uses `--stub`.              |
 
 Model mode is opt-in and makes paid calls:
 

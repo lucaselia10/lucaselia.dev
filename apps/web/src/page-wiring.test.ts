@@ -8,8 +8,9 @@ describe("index page", () => {
 
     expect(source).toContain("<Assistant");
     expect(source).toContain("client:load");
-    expect(source).toContain("import.meta.env.PUBLIC_ASK_API_URL");
-    expect(source).toContain("import.meta.env.PUBLIC_ASK_STREAMING");
+    // The build profile decides: production always uses /api/ask, streamed (site-profile.ts).
+    expect(source).toContain("assistantConfig(siteEnv())");
+    expect(source).toContain("developmentDetails={developmentDetails}");
     expect(source).toContain("askApiUrl={askApiUrl}");
     expect(source).toContain("modelStreaming={modelStreaming}");
   });

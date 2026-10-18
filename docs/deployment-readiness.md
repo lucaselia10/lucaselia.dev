@@ -12,8 +12,8 @@ No account ID, credential, email address, hosted zone id, secret value, or deplo
 - Region: `us-east-1`. CDK is already bootstrapped there for the site.
 - Hosted zone: passed at deploy time through `SITE_HOSTED_ZONE_ID`, never written to the repository. `cdk.context.json` is ignored.
 - Secret: the owner creates the Anthropic key secret by hand in `us-east-1` before deploying ([runbook](design/production-assistant.md#runbook)). The stack references it by name (default `career-portfolio/anthropic-api-key`, or `-c anthropicSecretName=…`) and never creates or reads it at synth or deploy time.
-- Build: run `pnpm build:site` immediately before deploying. The app refuses a missing or development build, and (until Round 3) any page with a script.
-- Prepared assets: `pnpm prepare:api` and `pnpm prepare:web-adapter` run inside the deploy scripts. The adapter fetch fails closed on any checksum mismatch.
+- Build: run `pnpm build:site` immediately before deploying. The app refuses a missing or development build, the fixture, the career index, and any inline script or style whose hash is not pinned in the CSP.
+- Prepared assets: run `pnpm prepare:web-adapter` on your machine before diff or deploy (CI only ever has a stub layer). The deploy scripts also run `pnpm prepare:api` and the adapter fetch, and the site app refuses any adapter binary that does not match the pinned SHA-256.
 
 ## Before the first deploy with the assistant stack
 
@@ -25,7 +25,7 @@ No account ID, credential, email address, hosted zone id, secret value, or deplo
 ## After deploy, verify
 
 - Site: both hostnames load over HTTPS, `www` redirects to the apex, an unknown path returns the 404 page with status 404, and the response headers include HSTS, the CSP, and `X-Frame-Options: DENY`.
-- API: the function URL called directly is refused; `POST /api/ask` through the site streams; the 21st request in 10 minutes from one IP gets the JSON 429. The assistant UI stays off until Round 3.
+- API: the function URL called directly is refused; `POST /api/ask` through the site streams; the 21st request in 10 minutes from one IP gets the JSON 429.
 
 ## Rollback
 

@@ -401,6 +401,17 @@ main {
   background: var(--panel-heading);
 }
 
+.composer-count {
+  margin: 6px 0 0;
+  font-size: 0.8125rem;
+  color: var(--panel-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer textarea:disabled {
+  cursor: not-allowed;
+}
+
 /* Disabled reads as "waiting for a question", not as a broken control. */
 .composer button:disabled {
   border-color: var(--panel-input-border);

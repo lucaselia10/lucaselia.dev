@@ -58,7 +58,8 @@ DEFAULT_PORT = 8787
 MAX_BODY_BYTES = MAX_STREAM_BODY_BYTES
 ALLOWED_ORIGINS = frozenset({"http://localhost:4321", "http://127.0.0.1:4321"})
 ALLOW_METHODS = "POST, OPTIONS"
-ALLOW_HEADERS = "Content-Type"
+# The browser sends the body hash that production's CloudFront OAC needs; allow it locally.
+ALLOW_HEADERS = "Content-Type, x-amz-content-sha256"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 

@@ -1,10 +1,13 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App } from "aws-cdk-lib";
 import { describe, expect, it } from "vitest";
-import { productionBuildProblems } from "../lib/site-build-check";
-import { createSiteApp } from "../lib/site-app";
+import { inlineScriptHash, productionBuildProblems, scriptProblems } from "../lib/site-build-check";
+import { CONTENT_SECURITY_POLICY, INLINE_SCRIPT_HASHES } from "../lib/site-headers";
+import { assertPrepared, createSiteApp } from "../lib/site-app";
+import { WEB_ADAPTER_BINARY_SHA256, WEB_ADAPTER_STUB } from "../lib/web-adapter-pin";
 import { preparedAssets } from "./fixtures";
 
 function productionBuild(extra: Record<string, string> = {}): string {
@@ -29,7 +32,9 @@ function productionBuild(extra: Record<string, string> = {}): string {
 describe("site CDK app", () => {
   it("synthesizes the assistant and site stacks, both in us-east-1", () => {
     const app = createSiteApp({
-      app: new App({ context: { siteHostedZoneId: "Z0123456789TESTZONE" } }),
+      app: new App({
+        context: { siteHostedZoneId: "Z0123456789TESTZONE", webAdapterStub: "allow" },
+      }),
       siteDirectory: productionBuild(),
       ...preparedAssets(),
     });
@@ -50,7 +55,9 @@ describe("site CDK app", () => {
 
   it("refuses to synthesize without the staged asset or the adapter layer", () => {
     const assets = preparedAssets();
-    const context = { context: { siteHostedZoneId: "Z0123456789TESTZONE" } };
+    const context = {
+      context: { siteHostedZoneId: "Z0123456789TESTZONE", webAdapterStub: "allow" },
+    };
     expect(() =>
       createSiteApp({
         app: new App(context),
@@ -90,10 +97,92 @@ describe("site CDK app", () => {
     expect(problems).toMatch(/script/);
     expect(() =>
       createSiteApp({
-        app: new App({ context: { siteHostedZoneId: "Z0123456789TESTZONE" } }),
+        app: new App({
+          context: { siteHostedZoneId: "Z0123456789TESTZONE", webAdapterStub: "allow" },
+        }),
         siteDirectory: development,
         ...preparedAssets(),
       }),
     ).toThrow(/Refusing to deploy/);
+  });
+
+  it("allows exactly the island scripts the CSP pins, and nothing else", () => {
+    // Two inline scripts whose text hashes to the pinned values cannot be written here, so the
+    // pinned set is checked against the CSP and the rule against synthetic scripts.
+    expect(INLINE_SCRIPT_HASHES).toHaveLength(2);
+    for (const hash of INLINE_SCRIPT_HASHES) {
+      expect(hash).toMatch(/^sha256-[A-Za-z0-9+/]{43}=$/);
+      expect(CONTENT_SECURITY_POLICY).toContain(`'${hash}'`);
+    }
+    expect(inlineScriptHash("")).toBe("sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=");
+
+    const island =
+      '<astro-island></astro-island><script type="module" src="/_astro/a.B1.js"></script>';
+    expect(scriptProblems("index.html", island)).toEqual([]);
+    expect(scriptProblems("a.html", "<script>alert(1)</script>").join()).toMatch(
+      /inline script the CSP does not allow \(sha256-/,
+    );
+    expect(
+      scriptProblems("b.html", '<script src="https://cdn.example/x.js"></script>').join(),
+    ).toMatch(/outside \/_astro\//);
+    expect(scriptProblems("c.html", '<script src="/_astro/x.js">inline()</script>').join()).toMatch(
+      /outside \/_astro\//,
+    );
+    expect(scriptProblems("d.html", '<button onclick="go()">Go</button>').join()).toMatch(
+      /inline event handler/,
+    );
+    expect(scriptProblems("e.html", '<a href="javascript:void(0)">x</a>').join()).toMatch(
+      /javascript: URL/,
+    );
+  });
+
+  it("refuses the stub adapter layer for any synth that may deploy", () => {
+    const assets = preparedAssets(); // holds the CI stub
+    expect(() => assertPrepared(assets.lambdaAssetPath, assets.webAdapterLayerPath)).toThrow(
+      /is the CI stub .*Run "pnpm prepare:web-adapter" before diff or deploy/,
+    );
+    expect(() =>
+      createSiteApp({
+        app: new App({ context: { siteHostedZoneId: "Z0123456789TESTZONE" } }),
+        siteDirectory: productionBuild(),
+        ...assets,
+      }),
+    ).toThrow(/CI stub/);
+    // Only an explicit, CI-only context accepts it.
+    expect(() =>
+      assertPrepared(assets.lambdaAssetPath, assets.webAdapterLayerPath, { allowStub: true }),
+    ).not.toThrow();
+  });
+
+  it("accepts the pinned binary, and refuses any other binary even when the stub is allowed", () => {
+    const assets = preparedAssets();
+    const binary = join(assets.webAdapterLayerPath, "extensions", "lambda-adapter");
+    writeFileSync(binary, "a release binary stand-in");
+    const pinned = createHash("sha256").update(readFileSync(binary)).digest("hex");
+
+    expect(() =>
+      assertPrepared(assets.lambdaAssetPath, assets.webAdapterLayerPath, { binarySha256: pinned }),
+    ).not.toThrow();
+    expect(() =>
+      assertPrepared(assets.lambdaAssetPath, assets.webAdapterLayerPath, { allowStub: true }),
+    ).toThrow(/not the pinned binary/);
+    expect(WEB_ADAPTER_BINARY_SHA256).toMatch(/^[0-9a-f]{64}$/);
+    expect(WEB_ADAPTER_STUB).toContain("STUB-NOT-DEPLOYABLE");
+    expect(WEB_ADAPTER_STUB).toContain("exit 1");
+  });
+
+  it("lets only the CI synth script allow the stub; diff and deploy never do", () => {
+    const scripts = (
+      JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")) as {
+        scripts: Record<string, string>;
+      }
+    ).scripts;
+    expect(scripts.synth).toContain("prepare:web-adapter --stub");
+    expect(scripts.synth).toContain("-c webAdapterStub=allow");
+    for (const name of ["deploy:site", "diff:site", "synth:site"]) {
+      expect(scripts[name], name).toContain("pnpm -w prepare:web-adapter &&");
+      expect(scripts[name], name).not.toContain("webAdapterStub");
+      expect(scripts[name], name).not.toContain("--stub");
+    }
   });
 });

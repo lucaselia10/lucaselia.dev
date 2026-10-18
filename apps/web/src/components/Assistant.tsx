@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type SubmitEvent } fro
 import {
   ASK_QUESTION_MAX_LENGTH,
   askCareerQuestion,
+  isFinalFailure,
   safeCitationHref,
   streamCareerQuestion,
   type AskCitation,
@@ -13,6 +14,8 @@ import { formatVisibleDates } from "../format-dates";
 
 export const DEFAULT_INTRO =
   "Answers come from my reviewed career pages, and each one links to its source.";
+/** Shown under the intro. True of the production app: it logs no question or answer text. */
+export const PRIVACY_NOTE = "Questions and answers aren't saved.";
 
 type AssistantProps = {
   askApiUrl?: string;
@@ -22,6 +25,8 @@ type AssistantProps = {
   heading?: string;
   intro?: string | null;
   suggestions?: readonly string[];
+  /** Token counts and cost estimates from the local server. Never shown in production. */
+  developmentDetails?: boolean;
 };
 
 type ExchangeStatus = "pending" | "streaming" | "answered" | "failed";
@@ -33,6 +38,8 @@ type Exchange = {
   answer?: string;
   citations?: AskCitation[];
   errorMessage?: string;
+  /** False when trying again cannot help during this visit (the assistant is paused). */
+  retryable?: boolean;
   requestId?: string;
   fixture?: boolean;
   usage?: AskUsage;
@@ -60,12 +67,15 @@ export default function Assistant({
   heading = "Ask about my work",
   intro,
   suggestions = DEFAULT_SUGGESTIONS,
+  developmentDetails = false,
 }: AssistantProps) {
   const introText = intro === undefined ? (variant === "full" ? DEFAULT_INTRO : null) : intro;
   const url = askApiUrl?.trim() ?? "";
   const configured = url !== "";
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
+  // Set by a "paused" failure: the assistant stays off for the rest of the visit.
+  const [paused, setPaused] = useState(false);
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
@@ -75,8 +85,14 @@ export default function Assistant({
 
   useEffect(() => {
     mountedRef.current = true;
+    // Leaving the page (including into the back/forward cache) stops any answer in flight.
+    const abortInFlight = () => {
+      abortRef.current?.abort();
+    };
+    window.addEventListener("pagehide", abortInFlight);
     return () => {
       mountedRef.current = false;
+      window.removeEventListener("pagehide", abortInFlight);
       abortRef.current?.abort();
     };
   }, []);
@@ -90,7 +106,7 @@ export default function Assistant({
 
   async function submitQuestion(nextQuestion: string, replaceId?: string) {
     const trimmed = nextQuestion.trim();
-    if (!configured || trimmed === "" || pending) {
+    if (!configured || trimmed === "" || pending || paused) {
       return;
     }
     abortRef.current?.abort();
@@ -147,6 +163,10 @@ export default function Assistant({
       return;
     }
     if (!response.ok) {
+      const final = isFinalFailure(response.kind);
+      if (final) {
+        setPaused(true);
+      }
       setDraft(trimmed);
       setExchanges((current) =>
         current.map((exchange) =>
@@ -157,6 +177,7 @@ export default function Assistant({
                 answer: undefined,
                 citations: undefined,
                 errorMessage: response.message,
+                retryable: !final,
                 requestId: response.requestId,
               }
             : exchange,
@@ -194,13 +215,18 @@ export default function Assistant({
     }
   }
 
-  const submitDisabled = !configured || pending || draft.trim() === "";
+  const submitDisabled = !configured || pending || paused || draft.trim() === "";
   const showSuggestions = exchanges.length === 0 && !pending;
 
   return (
     <section id="ask" className={`assistant assistant-${variant}`} aria-labelledby="ask-title">
       <h2 id="ask-title">{heading}</h2>
-      {introText ? <p className="assistant-note">{introText}</p> : null}
+      {introText ? (
+        <>
+          <p className="assistant-note">{introText}</p>
+          <p className="assistant-note">{PRIVACY_NOTE}</p>
+        </>
+      ) : null}
       {configured ? null : (
         <p className="assistant-status" role="status">
           The career assistant is unavailable because no API URL is configured.
@@ -224,6 +250,7 @@ export default function Assistant({
               key={exchange.id}
               exchange={exchange}
               live={index === exchanges.length - 1}
+              developmentDetails={developmentDetails}
               onRetry={() => {
                 void submitQuestion(exchange.question, exchange.id);
               }}
@@ -239,7 +266,7 @@ export default function Assistant({
                 <button
                   className="suggestion"
                   type="button"
-                  disabled={!configured || pending}
+                  disabled={!configured || pending || paused}
                   onClick={() => {
                     void submitQuestion(suggestion);
                   }}
@@ -260,6 +287,8 @@ export default function Assistant({
             rows={2}
             value={draft}
             maxLength={ASK_QUESTION_MAX_LENGTH}
+            disabled={paused}
+            aria-describedby="question-count"
             onChange={(event) => {
               setDraft(event.target.value);
             }}
@@ -269,6 +298,9 @@ export default function Assistant({
             Send
           </button>
         </div>
+        <p className="composer-count" id="question-count">
+          {draft.length} / {ASK_QUESTION_MAX_LENGTH} characters
+        </p>
       </form>
     </section>
   );
@@ -277,10 +309,12 @@ export default function Assistant({
 function ExchangeView({
   exchange,
   live,
+  developmentDetails,
   onRetry,
 }: {
   exchange: Exchange;
   live: boolean;
+  developmentDetails: boolean;
   onRetry: () => void;
 }) {
   const announcement =
@@ -308,9 +342,11 @@ function ExchangeView({
             {exchange.errorMessage}
             {exchange.requestId ? ` Reference: ${exchange.requestId}` : ""}
           </p>
-          <button type="button" onClick={onRetry}>
-            Try again
-          </button>
+          {exchange.retryable === false ? null : (
+            <button type="button" onClick={onRetry}>
+              Try again
+            </button>
+          )}
         </div>
       ) : null}
       {(exchange.status === "streaming" || exchange.status === "answered") && exchange.answer ? (
@@ -328,12 +364,18 @@ function ExchangeView({
           {exchange.status === "answered" && exchange.fixture ? (
             <p className="stream-note">Fixture stream. Not a live model answer.</p>
           ) : null}
-          {exchange.status === "answered" && exchange.usage && !exchange.fixture ? (
+          {developmentDetails &&
+          exchange.status === "answered" &&
+          exchange.usage &&
+          !exchange.fixture ? (
             <p className="stream-note">
               Tokens: {exchange.usage.inputTokens} in, {exchange.usage.outputTokens} out
             </p>
           ) : null}
-          {exchange.status === "answered" && exchange.estimatedCostUsd && !exchange.fixture ? (
+          {developmentDetails &&
+          exchange.status === "answered" &&
+          exchange.estimatedCostUsd &&
+          !exchange.fixture ? (
             <p className="stream-note">Estimated cost: ${exchange.estimatedCostUsd}</p>
           ) : null}
         </div>

@@ -77,7 +77,7 @@ asset.
 pnpm format:check · pnpm lint · pnpm typecheck · pnpm test (builds retrieval, then runs pytest)
 pnpm test:browser — Playwright + axe; builds a development-profile preview on 127.0.0.1:4329
 and the production site on 127.0.0.1:4331, so both ports must be free. 4321 is left for `pnpm dev:web`.
-pnpm build:site — the production web build (no assistant, no fixture) into apps/web/dist.
+pnpm build:site — the production web build (assistant on /api/ask, no fixture) into apps/web/dist.
 pnpm check:public — scans every file that would be committed for account IDs, home paths,
 internal hosts, private keys, key-shaped strings, and the phrases in the untracked
 private/public-blocklist.txt.

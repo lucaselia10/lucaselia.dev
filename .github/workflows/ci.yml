@@ -58,12 +58,9 @@ jobs:
       - name: Build the site
         run: pnpm build
 
-      - name: Fetch the pinned Lambda Web Adapter
-        # Anonymous read of the public image; fails closed unless the manifest digest, layer
-        # digests, and binary SHA-256 all match the pins in scripts/src/web-adapter.ts.
-        run: pnpm prepare:web-adapter
-
       - name: Synthesize CDK
-        # Both stacks of the site app, with a placeholder hosted zone id. No AWS credentials;
-        # nothing is looked up or deployed.
+        # Both stacks of the site app, offline: a placeholder hosted zone id and a STUB Lambda
+        # Web Adapter layer (no registry fetch; shared runners are throttled by public ECR).
+        # The site app accepts the stub only with -c webAdapterStub=allow, which only this
+        # synth passes; diff and deploy require the pinned binary. Nothing is deployed.
         run: pnpm synth

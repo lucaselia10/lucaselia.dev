@@ -7,7 +7,8 @@ import { formatEmployer, formatShortDateSpan } from "../format-dates";
 import BaseLayout from "../layouts/BaseLayout.astro";
 import { bodyExcerpt } from "../role-body";
 import { contactLinks } from "../site-content";
-import { assistantEnabled } from "../site-profile";
+import { assistantConfig, assistantEnabled } from "../site-profile";
+import { siteEnv } from "../site-env";
 import {
   byStartDateDescending,
   careerChart,
@@ -38,9 +39,8 @@ const caption = skipped
   ? `Each bar opens that role. The axis skips ${skipped} to give recent roles more room.`
   : "Each bar opens that role.";
 
-const askApiUrl = import.meta.env.PUBLIC_ASK_API_URL;
-const modelStreaming = import.meta.env.PUBLIC_ASK_STREAMING === "true";
-// The v1 site ships without the assistant: no panel, button, or teaser unless a URL is set.
+const { askApiUrl, modelStreaming, developmentDetails } = assistantConfig(siteEnv());
+// Development builds without an ask URL render no panel, button, or teaser.
 const showAssistant = assistantEnabled(askApiUrl);
 const contact = contactLinks(profile);
 ---
@@ -85,6 +85,7 @@ const contact = contactLinks(profile);
           client:load
           askApiUrl={askApiUrl}
           modelStreaming={modelStreaming}
+          developmentDetails={developmentDetails}
           suggestions={homeSuggestions(modelStreaming)}
         />
       </div>

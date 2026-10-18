@@ -10,7 +10,11 @@ import {
   PortfolioSiteStack,
   VIEWER_REQUEST_SOURCE,
 } from "../lib/portfolio-site-stack";
-import { CONTENT_SECURITY_POLICY, PERMISSIONS_POLICY } from "../lib/site-headers";
+import {
+  CONTENT_SECURITY_POLICY,
+  INLINE_SCRIPT_HASHES,
+  PERMISSIONS_POLICY,
+} from "../lib/site-headers";
 import { TEST_ENV, ZONE_ID, preparedAssets, siteDirectory, synthesizeStacks } from "./fixtures";
 
 const CACHING_OPTIMIZED = "658327ea-f89d-4fab-a63d-7e88639e58f6";
@@ -193,7 +197,12 @@ describe("PortfolioSiteStack", () => {
       }),
     });
     expect(CONTENT_SECURITY_POLICY).toContain("frame-ancestors 'none'");
-    expect(CONTENT_SECURITY_POLICY).toContain("script-src 'none'");
+    expect(CONTENT_SECURITY_POLICY).toContain(
+      `script-src 'self' ${INLINE_SCRIPT_HASHES.map((hash) => `'${hash}'`).join(" ")};`,
+    );
+    expect(CONTENT_SECURITY_POLICY).toContain("connect-src 'self'");
+    expect(CONTENT_SECURITY_POLICY).not.toContain("'unsafe-eval'");
+    expect(CONTENT_SECURITY_POLICY).not.toMatch(/script-src[^;]*'unsafe-inline'/);
     expect(CONTENT_SECURITY_POLICY).toContain("default-src 'none'");
     const config = distributionConfig();
     expect(config.DefaultCacheBehavior.ResponseHeadersPolicyId).toBeDefined();

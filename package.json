@@ -18,7 +18,7 @@
     "test:python": "uv run --directory services/ask-api pytest",
     "test:browser": "pnpm --filter @career-portfolio/web test:browser",
     "build": "pnpm --filter @career-portfolio/web build",
-    "build:site": "PORTFOLIO_SITE=production PUBLIC_ASK_API_URL= PUBLIC_ASK_STREAMING= pnpm --filter @career-portfolio/web build",
+    "build:site": "PORTFOLIO_SITE=production pnpm --filter @career-portfolio/web build",
     "validate:content": "pnpm --filter @career-portfolio/scripts validate",
     "index:content": "pnpm --filter @career-portfolio/scripts index",
     "sync:content": "pnpm --filter @career-portfolio/scripts sync",

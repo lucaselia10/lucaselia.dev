@@ -45,7 +45,9 @@ def test_options_allows_the_local_origins() -> None:
         assert result.status == 204
         assert result.headers["Access-Control-Allow-Origin"] == origin
         assert result.headers["Access-Control-Allow-Methods"] == "POST, OPTIONS"
-        assert result.headers["Access-Control-Allow-Headers"] == "Content-Type"
+        assert result.headers["Access-Control-Allow-Headers"] == (
+            "Content-Type, x-amz-content-sha256"
+        )
         assert "Access-Control-Allow-Credentials" not in result.headers
         assert "*" not in result.headers["Access-Control-Allow-Origin"]
 

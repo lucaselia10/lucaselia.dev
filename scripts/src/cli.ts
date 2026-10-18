@@ -10,7 +10,12 @@ import {
   retrievalManifestPath,
 } from "./paths.js";
 import { copyEvidencePackage, stageLambdaAsset } from "./stage-lambda-asset.js";
-import { WEB_ADAPTER_VERSION, prepareWebAdapterLayer } from "./web-adapter.js";
+import {
+  WEB_ADAPTER_VERSION,
+  prepareWebAdapterLayer,
+  prepareWebAdapterStub,
+  webAdapterPins,
+} from "./web-adapter.js";
 import { synchronizeCareerIndex, validateCorpus, writeCareerIndex } from "./validate-content.js";
 
 const command = process.argv[2];
@@ -57,10 +62,27 @@ if (command === "validate") {
   }
 } else if (command === "fetch-web-adapter") {
   try {
-    const result = await prepareWebAdapterLayer(webAdapterLayerPath);
-    console.error(
-      `Lambda Web Adapter ${WEB_ADAPTER_VERSION} layer ${result} at ${webAdapterLayerPath}`,
-    );
+    if (process.argv.includes("--stub")) {
+      // CI: no network. The site app refuses this layer unless the synth says it will not
+      // deploy (-c webAdapterStub=allow).
+      const result = prepareWebAdapterStub(webAdapterLayerPath);
+      console.error(
+        result === "stub"
+          ? `Wrote a STUB Lambda Web Adapter layer at ${webAdapterLayerPath} (not deployable).`
+          : `Kept the verified Lambda Web Adapter ${WEB_ADAPTER_VERSION} at ${webAdapterLayerPath}.`,
+      );
+    } else {
+      // WEB_ADAPTER_REGISTRY_URL only redirects the download (the CI rehearsal points it at an
+      // unreachable host); the digest and checksum pins still decide what is accepted.
+      const registry = process.env.WEB_ADAPTER_REGISTRY_URL?.trim() || undefined;
+      const result = await prepareWebAdapterLayer(webAdapterLayerPath, fetch, webAdapterPins, {
+        ...(registry ? { registry } : {}),
+        log: (line) => console.error(line),
+      });
+      console.error(
+        `Lambda Web Adapter ${WEB_ADAPTER_VERSION} layer ${result} at ${webAdapterLayerPath}`,
+      );
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Lambda Web Adapter fetch failed.";
     console.error(message);

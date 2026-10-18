@@ -1,10 +1,13 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { INLINE_SCRIPT_HASHES, INLINE_STYLE_HASHES } from "./site-headers";
 
 /**
  * Refuse to deploy anything but a production build of the site. `pnpm build:site`
- * produces one; a development build (with the fixture, the career index, or the
- * assistant island) or a missing build fails before synthesis.
+ * produces one; a development build (with the fixture or the career index), a page with an
+ * inline script the CSP does not allow by hash, a script from anywhere but /_astro/, an
+ * inline event handler, or a missing build fails before synthesis.
  */
 export function productionBuildProblems(siteDirectory: string): string[] {
   if (!existsSync(join(siteDirectory, "index.html"))) {
@@ -29,10 +32,58 @@ export function productionBuildProblems(siteDirectory: string): string[] {
       if (text.includes("fictional-")) {
         problems.push(`${path} links to a test fixture.`);
       }
-      if (text.includes("<astro-island") || text.includes("<script")) {
-        problems.push(`${path} contains a script; the v1 site ships without the assistant.`);
+      if (path.endsWith(".html")) {
+        problems.push(...scriptProblems(path, text));
       }
     }
+  }
+  return problems;
+}
+
+const SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+const STYLE = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
+const ALLOWED_SCRIPT_SOURCE = /^\/_astro\/[A-Za-z0-9._-]+\.js$/;
+
+/** CSP hash source for an inline script: base64 SHA-256 of its exact text. */
+export function inlineScriptHash(content: string): string {
+  return `sha256-${createHash("sha256").update(content, "utf8").digest("base64")}`;
+}
+
+/** Every inline script must be one the CSP allows by hash; external ones only from /_astro/. */
+export function scriptProblems(path: string, html: string): string[] {
+  const problems: string[] = [];
+  const allowed = new Set<string>(INLINE_SCRIPT_HASHES);
+  for (const match of html.matchAll(SCRIPT)) {
+    const attributes = match[1] ?? "";
+    const content = match[2] ?? "";
+    const source = /\ssrc\s*=\s*"([^"]*)"/i.exec(attributes)?.[1];
+    if (source !== undefined) {
+      if (!ALLOWED_SCRIPT_SOURCE.test(source) || content.trim() !== "") {
+        problems.push(`${path} loads a script from outside /_astro/: ${source}`);
+      }
+      continue;
+    }
+    const hash = inlineScriptHash(content);
+    if (!allowed.has(hash)) {
+      problems.push(
+        `${path} has an inline script the CSP does not allow (${hash}). Update INLINE_SCRIPT_HASHES in site-headers.ts only after reviewing it.`,
+      );
+    }
+  }
+  const styles = new Set<string>(INLINE_STYLE_HASHES);
+  for (const match of html.matchAll(STYLE)) {
+    const hash = inlineScriptHash(match[1] ?? "");
+    if (!styles.has(hash)) {
+      problems.push(
+        `${path} has an inline style the CSP does not allow (${hash}). Update INLINE_STYLE_HASHES in site-headers.ts only after reviewing it.`,
+      );
+    }
+  }
+  if (/<[a-z][^>]*\son[a-z]+\s*=/i.test(html)) {
+    problems.push(`${path} has an inline event handler, which the CSP blocks.`);
+  }
+  if (/javascript:/i.test(html)) {
+    problems.push(`${path} has a javascript: URL.`);
   }
   return problems;
 }

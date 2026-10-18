@@ -3,31 +3,50 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 
+import {
+  WEB_ADAPTER_ARM64_MANIFEST,
+  WEB_ADAPTER_BINARY_SHA256,
+  WEB_ADAPTER_BOOTSTRAP,
+  WEB_ADAPTER_REGISTRY,
+  WEB_ADAPTER_REPOSITORY,
+  WEB_ADAPTER_STUB,
+} from "../../infrastructure/lib/web-adapter-pin.js";
+
 /**
  * The AWS Lambda Web Adapter binary, packaged as this project's own Lambda layer.
  *
  * The project publishes no binaries on GitHub releases. The prebuilt arm64 binary is in the
  * public image public.ecr.aws/awsguru/aws-lambda-adapter, read here anonymously over the OCI
- * registry API (no credentials, no account). Three pins make the download fail closed:
- * the arm64 manifest digest, each layer blob's digest from that manifest, and the SHA-256 of
- * the extracted binary.
+ * registry API (an anonymous pull token, no credentials, no account). Three pins make the
+ * download fail closed: the arm64 manifest digest, each layer blob's digest from that
+ * manifest, and the SHA-256 of the extracted binary. The pins live in
+ * infrastructure/lib/web-adapter-pin.ts, where the site app's deploy guard reads them too.
+ *
+ * The registry throttles anonymous pulls (shared CI runners see HTTP 429), so every request
+ * is retried on 429, 5xx, or a network error, honoring Retry-After. CI does not fetch at all:
+ * it synthesizes with a stub layer (prepareWebAdapterStub) that the deploy guard refuses.
  */
-export const WEB_ADAPTER_VERSION = "1.1.0";
-export const WEB_ADAPTER_REGISTRY = "https://public.ecr.aws";
-export const WEB_ADAPTER_REPOSITORY = "awsguru/aws-lambda-adapter";
-/** The linux/arm64 manifest that the 1.1.0 index pointed to on October 18, 2026. */
-export const WEB_ADAPTER_ARM64_MANIFEST =
-  "sha256:98d6d1dc9ad3f18c6af7baaa397fb033a57d82f5bffb58ff33bef1c2e1f4f0fe";
-/** SHA-256 of /lambda-adapter inside that image. */
-export const WEB_ADAPTER_BINARY_SHA256 =
-  "317590a03cf57b695c2075c6f42c01cc22ce50d5eb21d6b7ca844cba0403dedc";
+export {
+  WEB_ADAPTER_ARM64_MANIFEST,
+  WEB_ADAPTER_BINARY_SHA256,
+  WEB_ADAPTER_BOOTSTRAP,
+  WEB_ADAPTER_REGISTRY,
+  WEB_ADAPTER_REPOSITORY,
+  WEB_ADAPTER_STUB,
+};
+export { WEB_ADAPTER_VERSION } from "../../infrastructure/lib/web-adapter-pin.js";
 
-/**
- * The layer's /opt/bootstrap. It is AWS_LAMBDA_EXEC_WRAPPER: the runtime hands it its own
- * start command, and it starts the function's handler script instead, as the adapter's own
- * layer does. The adapter itself runs as the extension in /opt/extensions.
- */
-export const WEB_ADAPTER_BOOTSTRAP = '#!/bin/bash\nexec -- "${LAMBDA_TASK_ROOT}/${_HANDLER}"\n';
+export const RETRY_ATTEMPTS = 5;
+export const RETRY_BASE_DELAY_MS = 1000;
+export const RETRY_MAX_DELAY_MS = 60_000;
+
+export interface DownloadOptions {
+  /** The registry base URL. Tests and the CI rehearsal point it elsewhere. */
+  registry?: string;
+  attempts?: number;
+  sleep?: (milliseconds: number) => Promise<void>;
+  log?: (line: string) => void;
+}
 
 const MANIFEST_TYPES = [
   "application/vnd.docker.distribution.manifest.v2+json",
@@ -71,11 +90,33 @@ export async function prepareWebAdapterLayer(
   layerDirectory: string,
   fetchImpl: Fetch = fetch,
   pins = webAdapterPins,
+  options: DownloadOptions = {},
 ): Promise<"cached" | "downloaded"> {
   if (webAdapterLayerReady(layerDirectory, pins)) {
     return "cached";
   }
-  const binary = await downloadWebAdapter(fetchImpl, pins);
+  const binary = await downloadWebAdapter(fetchImpl, pins, options);
+  writeLayer(layerDirectory, binary);
+  return "downloaded";
+}
+
+/**
+ * Write a stub layer for synthesis without the network (CI). The stub is a script that fails
+ * if it ever runs, and the site app refuses to synthesize it unless told the synth is not for
+ * deploying. A verified real binary already in place is kept.
+ */
+export function prepareWebAdapterStub(
+  layerDirectory: string,
+  pins = webAdapterPins,
+): "real" | "stub" {
+  if (webAdapterLayerReady(layerDirectory, pins)) {
+    return "real";
+  }
+  writeLayer(layerDirectory, new TextEncoder().encode(WEB_ADAPTER_STUB));
+  return "stub";
+}
+
+function writeLayer(layerDirectory: string, binary: Uint8Array): void {
   rmSync(layerDirectory, { recursive: true, force: true });
   mkdirSync(join(layerDirectory, "extensions"), { recursive: true });
   const binaryPath = join(layerDirectory, "extensions", "lambda-adapter");
@@ -84,18 +125,21 @@ export async function prepareWebAdapterLayer(
   const bootstrapPath = join(layerDirectory, "bootstrap");
   writeFileSync(bootstrapPath, WEB_ADAPTER_BOOTSTRAP);
   chmodSync(bootstrapPath, 0o755);
-  return "downloaded";
 }
 
 export async function downloadWebAdapter(
   fetchImpl: Fetch,
   pins = webAdapterPins,
+  options: DownloadOptions = {},
 ): Promise<Uint8Array> {
-  const token = await registryToken(fetchImpl);
+  const registry = options.registry ?? WEB_ADAPTER_REGISTRY;
+  const get = (url: string, headers: Record<string, string>) =>
+    download(fetchImpl, url, headers, options);
+  const token = await registryToken(registry, get);
   const headers = { Authorization: `Bearer ${token}` };
-  const base = `${WEB_ADAPTER_REGISTRY}/v2/${WEB_ADAPTER_REPOSITORY}`;
+  const base = `${registry}/v2/${WEB_ADAPTER_REPOSITORY}`;
 
-  const manifestBytes = await download(fetchImpl, `${base}/manifests/${pins.manifestDigest}`, {
+  const manifestBytes = await get(`${base}/manifests/${pins.manifestDigest}`, {
     ...headers,
     Accept: MANIFEST_TYPES,
   });
@@ -103,7 +147,7 @@ export async function downloadWebAdapter(
   const layers = manifestLayers(JSON.parse(new TextDecoder().decode(manifestBytes)));
 
   for (const layer of layers) {
-    const blob = await download(fetchImpl, `${base}/blobs/${layer}`, headers);
+    const blob = await get(`${base}/blobs/${layer}`, headers);
     verifyDigest(blob, layer, "image layer");
     const binary = tarEntry(gunzipSync(blob), "lambda-adapter");
     if (binary !== null) {
@@ -119,9 +163,13 @@ export async function downloadWebAdapter(
   throw new Error("The pinned image has no /lambda-adapter file.");
 }
 
-async function registryToken(fetchImpl: Fetch): Promise<string> {
+/** Public ECR wants an anonymous bearer token, even for public images. */
+async function registryToken(
+  registry: string,
+  get: (url: string, headers: Record<string, string>) => Promise<Uint8Array>,
+): Promise<string> {
   const scope = `repository:${WEB_ADAPTER_REPOSITORY}:pull`;
-  const bytes = await download(fetchImpl, `${WEB_ADAPTER_REGISTRY}/token/?scope=${scope}`, {});
+  const bytes = await get(`${registry}/token/?scope=${scope}`, {});
   const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
   const token = isRecord(parsed) ? parsed.token : undefined;
   if (typeof token !== "string" || token === "") {
@@ -130,17 +178,56 @@ async function registryToken(fetchImpl: Fetch): Promise<string> {
   return token;
 }
 
+/** GET with retries on 429, 5xx, and network errors. Other statuses fail at once. */
 async function download(
   fetchImpl: Fetch,
   url: string,
   headers: Record<string, string>,
+  options: DownloadOptions,
 ): Promise<Uint8Array> {
-  const response = await fetchImpl(url, { headers });
-  if (!response.ok) {
-    // The URL is public; the token header is never included in the message.
-    throw new Error(`Download failed with HTTP ${response.status}: ${url}`);
+  const attempts = options.attempts ?? RETRY_ATTEMPTS;
+  const sleep = options.sleep ?? ((ms: number) => new Promise((done) => setTimeout(done, ms)));
+  for (let attempt = 1; ; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetchImpl(url, { headers });
+    } catch (error) {
+      if (attempt >= attempts) {
+        const reason = error instanceof Error ? error.message : "network error";
+        throw new Error(`Download failed after ${attempt} attempts (${reason}): ${url}`);
+      }
+      const wait = backoff(attempt, null);
+      options.log?.(`Network error; retrying in ${wait} ms (attempt ${attempt} of ${attempts}).`);
+      await sleep(wait);
+      continue;
+    }
+    if (response.ok) {
+      return new Uint8Array(await response.arrayBuffer());
+    }
+    const retryable = response.status === 429 || response.status >= 500;
+    if (!retryable || attempt >= attempts) {
+      // The URL is public; the token header is never included in the message.
+      const tries = retryable ? ` after ${attempt} attempts` : "";
+      throw new Error(`Download failed with HTTP ${response.status}${tries}: ${url}`);
+    }
+    const wait = backoff(attempt, response.headers.get("retry-after"));
+    options.log?.(
+      `HTTP ${response.status}; retrying in ${wait} ms (attempt ${attempt} of ${attempts}).`,
+    );
+    await sleep(wait);
   }
-  return new Uint8Array(await response.arrayBuffer());
+}
+
+/** Retry-After (seconds or an HTTP date) when present, else 1 s, 2 s, 4 s, …; at most 60 s. */
+export function backoff(attempt: number, retryAfter: string | null, now = Date.now()): number {
+  if (retryAfter !== null && retryAfter.trim() !== "") {
+    const seconds = Number(retryAfter);
+    const fromHeader = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retryAfter) - now;
+    if (Number.isFinite(fromHeader) && fromHeader >= 0) {
+      return Math.min(Math.ceil(fromHeader), RETRY_MAX_DELAY_MS);
+    }
+  }
+  return Math.min(RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), RETRY_MAX_DELAY_MS);
 }
 
 export function verifyDigest(data: Uint8Array, digest: string, what: string): void {

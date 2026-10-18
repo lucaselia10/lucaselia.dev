@@ -7,7 +7,13 @@ import PositionStrip from "../components/PositionStrip.astro";
 import { formatDateSpan, formatEmployer } from "../format-dates";
 import BaseLayout from "../layouts/BaseLayout.astro";
 import { parseRoleBody } from "../role-body";
-import { assistantEnabled, isProductionSite, shipsDocument } from "../site-profile";
+import {
+  assistantConfig,
+  assistantEnabled,
+  isProductionSite,
+  shipsDocument,
+} from "../site-profile";
+import { siteEnv } from "../site-env";
 import {
   byStartDateDescending,
   careerChart,
@@ -82,7 +88,7 @@ const back =
       ? { href: "/#education", label: "All education" }
       : { href: "/", label: "Back to the portfolio" };
 
-const askApiUrl = import.meta.env.PUBLIC_ASK_API_URL;
+const { askApiUrl, modelStreaming, developmentDetails } = assistantConfig(siteEnv());
 const showAsk = assistantEnabled(askApiUrl) && !fictional && data.type !== "project";
 const askHeading =
   data.type === "experience"
@@ -90,8 +96,6 @@ const askHeading =
     : data.type === "background"
       ? "Ask about this program"
       : "Ask about my work";
-
-const modelStreaming = import.meta.env.PUBLIC_ASK_STREAMING === "true";
 ---
 
 <BaseLayout title={`${data.title}, Lucas Elia`} description={data.summary} askOnPage={showAsk}>
@@ -223,6 +227,7 @@ const modelStreaming = import.meta.env.PUBLIC_ASK_STREAMING === "true";
             client:load
             askApiUrl={askApiUrl}
             modelStreaming={modelStreaming}
+            developmentDetails={developmentDetails}
             variant="compact"
             heading={askHeading}
             suggestions={pageSuggestions(data.id, data.type, modelStreaming)}

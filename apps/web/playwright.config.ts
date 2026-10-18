@@ -53,7 +53,8 @@ export default defineConfig({
       }),
     },
     {
-      command: `pnpm build && pnpm preview --host 127.0.0.1 --port ${SITE_PORT} --ignore-lock`,
+      // Served like CloudFront, with a scripted streaming /api/ask (e2e/preview-server.ts).
+      command: `pnpm build && node e2e/preview-server.ts dist-e2e-site ${SITE_PORT}`,
       url: `http://127.0.0.1:${SITE_PORT}`,
       reuseExistingServer: false,
       timeout: 180_000,

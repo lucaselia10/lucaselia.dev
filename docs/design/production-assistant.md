@@ -162,11 +162,12 @@ The UI keeps the existing loading, streaming, cancel, and retry states and the a
 
 **CSP**, from `infrastructure/lib/site-headers.ts`:
 
-| Directive     | Now       | Proposed                                                                                                                                                                                                                     |
-| ------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `script-src`  | `'none'`  | `'self' 'sha256-…' 'sha256-…'`: the two inline Astro island scripts                                                                                                                                                          |
-| `connect-src` | `'none'`  | `'self'`                                                                                                                                                                                                                     |
-| All others    | unchanged | unchanged (`default-src 'none'`, `style-src-elem 'self'`, `style-src-attr 'unsafe-inline'`, `font-src 'self'`, `img-src 'self'`, `base-uri`, `form-action`, and `frame-ancestors` all `'none'`, `upgrade-insecure-requests`) |
+| Directive        | Now       | Proposed                                                                                                                                                                                                                     |
+| ---------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `script-src`     | `'none'`  | `'self' 'sha256-QzWFZi+FLIx23tnm9SBU4aEgx4x8DsuASP07mfqol/c=' 'sha256-Ya0pUYrC7nM5Cn/056TyVuEiz6dFGrzmkWzgON0pF0U='`: the two inline Astro island scripts                                                                    |
+| `style-src-elem` | `'self'`  | `'self' 'sha256-vv9IoKo7BSLbWcUHr3tNmfNVmm5L/9Cfn2H6LMk7/ow='`: Astro's island style, `astro-island{display:contents}`                                                                                                       |
+| `connect-src`    | `'none'`  | `'self'`                                                                                                                                                                                                                     |
+| All others       | unchanged | unchanged (`default-src 'none'`, `style-src-elem 'self'`, `style-src-attr 'unsafe-inline'`, `font-src 'self'`, `img-src 'self'`, `base-uri`, `form-action`, and `frame-ancestors` all `'none'`, `upgrade-insecure-requests`) |
 
 A production build with the assistant on (checked locally on October 17, 2026) emits two inline scripts, one of 130 bytes and one of 4,380 bytes, identical on all nine pages that render the island. It also emits module files under `/_astro/`. The site synth step computes the hashes from the build, and a test fails if any page contains an inline script whose hash is not in the policy. There is no `'unsafe-inline'` and no `'unsafe-eval'` for scripts. The existing Playwright check of every production page under the exact CSP must pass with the island hydrated.
 
@@ -259,24 +260,29 @@ Each round is reviewed before the next starts. Rounds 1 to 3 make no AWS calls a
 
 - **Built.** `PortfolioAssistantStack` and the `/api/*`, OAC, permission, and WAF additions to `PortfolioSiteStack`, as recorded in [ADR-009](../adr/009-production-assistant.md#round-2-implementation). `pnpm prepare:web-adapter` fetches and verifies the pinned adapter binary. The ask app, its HTTP API, the Knowledge Base resources, the publisher, and the Bedrock grounding code are removed. CI synthesizes both stacks with a placeholder hosted zone id.
 - **Tests.** CDK assertions for the function URL's stream mode and IAM auth, the Lambda OAC, both permissions scoped to the distribution, the `/api/*` behavior and its origin request policy, the WAF rule (limit, window, scope-down, custom 429), the secret permission scope, no layer ARN from another account, no reserved concurrency, 14-day log retention, and unchanged page behaviors and headers. Offline tests for the adapter fetch (digest and checksum failures, caching) and for staging (the `ask_api/` layout, `run.sh`, no boto3).
-- **Not done here:** CloudWatch alarms (the budget alarm notifies instead) and turning the assistant UI on (Round 3).
+- **Not done here:** CloudWatch alarms (the budget alarm notifies instead).
 
-### Round 3: site
+### Round 3: site, done
 
-- **Scope.**
-  - CSP hashes computed from the build, and `connect-src 'self'`.
-  - The production profile with the assistant on.
-  - Body hashing and the `x-amz-content-sha256` header.
-  - Status-aware error handling and the paused state.
-  - Token and cost lines only in development.
-  - The 500-character question limit and the 45 s timeout.
-- **Acceptance.**
-  - `pnpm test`, `pnpm test:browser`, and `pnpm build:site` pass.
-  - The production build has no inline script outside the two hashed ones.
+- **Built.**
+  - The production profile turns the assistant on in code (`assistantConfig` in `apps/web/src/site-profile.ts`): same-origin `/api/ask`, streamed, no development details. Lumen Harbor and `career-index.json` stay out.
+  - The browser serializes the body once and sends those bytes with their SHA-256 in `x-amz-content-sha256`.
+  - Every failure is mapped by HTTP status and code to client-owned text, so no server or CloudFront text is shown.
+  - A `paused` failure disables the composer for the visit.
+  - A 500-character limit with a visible counter; Send is disabled while answering.
+  - The stream aborts on `pagehide` and on unmount. A new question cannot start while one is answering, and a retry aborts the earlier request first.
+  - The browser timeout is 45 s.
+- **CSP.** `script-src 'self'` plus the two pinned island-script hashes; `style-src-elem 'self'` plus the pinned hash of Astro's one island style; `connect-src 'self'`. Hashes live in `INLINE_SCRIPT_HASHES` and `INLINE_STYLE_HASHES` in `infrastructure/lib/site-headers.ts`.
+- **Build check.** The site app now accepts island pages, but only inline scripts and styles whose hashes are pinned, external scripts only from `/_astro/`, no inline event handlers, and no `javascript:` URLs. It still refuses the fixture and the career index.
 - **Tests.**
-  - Unit tests for hashing (the digest of the exact sent bytes) and for every row of the failure table.
-  - Playwright tests against the production preview under the exact CSP, with routed fake NDJSON streams: progressive deltas, `done` with citations, `validation` after deltas, 429, 503 `paused`, and a non-JSON 502.
-  - Mobile viewport and axe.
+  - Unit tests: hashing, the status and code mapping, abort, the counter, development details, and the paused state.
+  - A build test that fails if any built page's inline script or style hash is not in the CSP.
+  - Playwright on the production build under the exact CSP:
+    - Progressive streaming from the preview server's `/api/ask`.
+    - The citation link, and the browser's body hash checked on the server.
+    - Each error state through route interception, and the network failure.
+    - No CSP violations, and axe with an answer shown.
+- **Why the preview server streams.** Playwright's `route.fulfill` sends a whole body at once, and Chromium will not continue an intercepted request to another origin. So the production preview (`apps/web/e2e/preview-server.ts`) serves the build the way CloudFront does and answers `/api/ask` with a scripted stream with delays. Error states use route interception.
 
 ### Round 4: deployment and smoke test (user-run)
 
@@ -321,25 +327,35 @@ rm -P "$TMPDIR/anthropic-key"
 
 `--query Name` prints only the secret's name, never its value. To rotate later, use `aws secretsmanager put-secret-value` the same way; the function picks up the new key on its next cold start. Alternatively create it in the console as plaintext. A different name works if it is passed as `-c anthropicSecretName=<name>` (add it to the deploy script's context).
 
-### 2. Review the change
+### 2. Fetch the Lambda Web Adapter (on your machine)
 
 ```bash
+pnpm prepare:web-adapter
+```
+
+This downloads the pinned adapter anonymously from public ECR and verifies the manifest digest, the layer digests, and the binary's SHA-256. It retries HTTP 429, 5xx, and network errors with exponential backoff, honoring `Retry-After`, and writes nothing unless every pin matches. CI never runs it: CI synthesizes with a stub layer (`pnpm prepare:web-adapter --stub`) and `-c webAdapterStub=allow`. Without that context, the site app refuses any layer whose binary is not the pinned release, so `diff:site` and `deploy:site` (which also run the fetch first, using the cached copy) stop with "Run pnpm prepare:web-adapter before diff or deploy" if only the stub is present.
+
+### 3. Review the change
+
+```bash
+pnpm prepare:web-adapter
 pnpm build:site
 SITE_HOSTED_ZONE_ID=<zone id> AWS_PROFILE=<deploy profile> pnpm run diff:site
 ```
 
 The diff covers both stacks. Expect a new `PortfolioAssistantStack` and, in `PortfolioSiteStack`, the `/api/*` behavior, a second OAC, an origin request policy, two Lambda permissions, and the WAF web ACL. Page behaviors and headers should not change.
 
-### 3. Deploy
+### 4. Deploy
 
 ```bash
+pnpm prepare:web-adapter
 pnpm build:site
 SITE_HOSTED_ZONE_ID=<zone id> AWS_PROFILE=<deploy profile> pnpm run deploy:site
 ```
 
 One command deploys both stacks, assistant first. The `AskFunctionName` output is needed for the kill switch. Smoke tests are Round 4.
 
-### 4. Kill switch (no redeploy)
+### 5. Kill switch (no redeploy)
 
 ```bash
 aws lambda put-function-concurrency --region us-east-1 --profile <deploy profile> \
@@ -353,15 +369,15 @@ aws lambda delete-function-concurrency --region us-east-1 --profile <deploy prof
   --function-name <AskFunctionName>
 ```
 
-### 5. Undo a deploy
+### 6. Undo a deploy
 
-Redeploy an earlier commit with step 3. To remove the assistant entirely, revert to a commit before Round 2 and deploy, or run `pnpm run destroy:site` (this removes the site too). The secret is not managed by the stack and stays until `aws secretsmanager delete-secret` is run.
+Redeploy an earlier commit with step 4. To remove the assistant entirely, revert to a commit before Round 2 and deploy, or run `pnpm run destroy:site` (this removes the site too). The secret is not managed by the stack and stays until `aws secretsmanager delete-secret` is run.
 
 ## User-run steps, in order
 
 Exact commands are written in Rounds 2 and 4. Claude does not run any of these.
 
-1. **Confirm** the Round 2 outputs below are what you want to deploy (the assistant UI stays off until Round 3).
+1. **Confirm** the Round 2 and Round 3 outputs are what you want to deploy: the next deploy turns the assistant on at `https://lucaselia.dev`.
 2. **Anthropic Console.**
    - Create a dedicated workspace for the portfolio, because the default workspace cannot have limits ([workspace limits](https://platform.claude.com/docs/en/api/rate-limits#setting-lower-limits-for-workspaces)).
    - Set its monthly spend limit to $10.

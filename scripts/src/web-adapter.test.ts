@@ -6,7 +6,10 @@ import { describe, expect, it } from "vitest";
 import {
   type Fetch,
   WEB_ADAPTER_BOOTSTRAP,
+  WEB_ADAPTER_STUB,
+  backoff,
   prepareWebAdapterLayer,
+  prepareWebAdapterStub,
   sha256Hex,
   tarEntry,
   webAdapterPins,
@@ -124,5 +127,96 @@ describe("Lambda Web Adapter layer", () => {
     expect(tarEntry(archive, "c")).toEqual(new Uint8Array([3]));
     expect(tarEntry(archive, "a/b.txt")).toEqual(new Uint8Array([1, 2]));
     expect(tarEntry(archive, "missing")).toBeNull();
+  });
+
+  it("asks for an anonymous token first, then retries 429 and 5xx, honoring Retry-After", async () => {
+    const good = registry();
+    const pins = { manifestDigest: good.manifestDigest, binarySha256: sha256Hex(BINARY) };
+    const throttled = new Map<string, number>();
+    const order: string[] = [];
+    const flaky: Fetch = async (url, init) => {
+      order.push(
+        url.includes("/token/") ? "token" : url.includes("/manifests/") ? "manifest" : "blob",
+      );
+      const seen = throttled.get(url) ?? 0;
+      throttled.set(url, seen + 1);
+      if (url.includes("/manifests/") && seen === 0) {
+        return new Response("slow down", { status: 429, headers: { "retry-after": "7" } });
+      }
+      if (url.includes("/blobs/") && seen < 2) {
+        return new Response("oops", { status: 503 });
+      }
+      return good.fetchImpl(url, init);
+    };
+    const waits: number[] = [];
+    const layer = join(mkdtempSync(join(tmpdir(), "lwa-")), "layer");
+
+    const result = await prepareWebAdapterLayer(layer, flaky, pins, {
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+
+    expect(result).toBe("downloaded");
+    expect(order[0]).toBe("token");
+    expect(waits).toEqual([7000, 1000, 2000]);
+    expect(readFileSync(join(layer, "extensions", "lambda-adapter"))).toEqual(Buffer.from(BINARY));
+  });
+
+  it("retries network errors, gives up after the last attempt, and never retries a 404", async () => {
+    const waits: number[] = [];
+    const sleep = async (ms: number) => {
+      waits.push(ms);
+    };
+    const offline: Fetch = async () => {
+      throw new TypeError("fetch failed");
+    };
+    const layer = join(mkdtempSync(join(tmpdir(), "lwa-")), "layer");
+    await expect(
+      prepareWebAdapterLayer(layer, offline, webAdapterPins, { attempts: 3, sleep }),
+    ).rejects.toThrow(/after 3 attempts \(fetch failed\)/);
+    expect(waits).toEqual([1000, 2000]);
+    expect(existsSync(layer)).toBe(false);
+
+    let calls = 0;
+    const missing: Fetch = async () => {
+      calls += 1;
+      return new Response("no", { status: 404 });
+    };
+    await expect(prepareWebAdapterLayer(layer, missing, webAdapterPins, { sleep })).rejects.toThrow(
+      /HTTP 404:/,
+    );
+    expect(calls).toBe(1);
+
+    const alwaysThrottled: Fetch = async () => new Response("", { status: 429 });
+    await expect(
+      prepareWebAdapterLayer(layer, alwaysThrottled, webAdapterPins, { attempts: 2, sleep }),
+    ).rejects.toThrow(/HTTP 429 after 2 attempts/);
+  });
+
+  it("computes backoff from Retry-After seconds or dates, else doubling, capped at 60 s", () => {
+    const now = Date.parse("2026-10-18T12:00:00Z");
+    expect(backoff(1, null)).toBe(1000);
+    expect(backoff(3, null)).toBe(4000);
+    expect(backoff(10, null)).toBe(60_000);
+    expect(backoff(1, "3")).toBe(3000);
+    expect(backoff(1, "600")).toBe(60_000);
+    expect(backoff(1, "Sun, 18 Oct 2026 12:00:05 GMT", now)).toBe(5000);
+    expect(backoff(2, "not a date")).toBe(2000);
+  });
+
+  it("writes a non-deployable stub for CI, and keeps a verified binary", async () => {
+    const layer = join(mkdtempSync(join(tmpdir(), "lwa-")), "layer");
+    expect(prepareWebAdapterStub(layer)).toBe("stub");
+    const stub = readFileSync(join(layer, "extensions", "lambda-adapter"), "utf8");
+    expect(stub).toBe(WEB_ADAPTER_STUB);
+    expect(stub).toContain("STUB-NOT-DEPLOYABLE");
+    expect(statSync(join(layer, "extensions", "lambda-adapter")).mode & 0o111).toBe(0o111);
+
+    const { fetchImpl, manifestDigest } = registry();
+    const pins = { manifestDigest, binarySha256: sha256Hex(BINARY) };
+    expect(await prepareWebAdapterLayer(layer, fetchImpl, pins)).toBe("downloaded");
+    expect(prepareWebAdapterStub(layer, pins)).toBe("real");
+    expect(readFileSync(join(layer, "extensions", "lambda-adapter"))).toEqual(Buffer.from(BINARY));
   });
 });

@@ -5,6 +5,7 @@ import { App } from "aws-cdk-lib";
 import { Template } from "aws-cdk-lib/assertions";
 import { PortfolioAssistantStack } from "../lib/portfolio-assistant-stack";
 import { PortfolioSiteStack, SITE_REGION } from "../lib/portfolio-site-stack";
+import { WEB_ADAPTER_STUB } from "../lib/web-adapter-pin";
 
 export const ZONE_ID = "Z0123456789TESTZONE";
 // The AWS documentation placeholder account, never a real one.
@@ -21,7 +22,7 @@ export function preparedAssets(): { lambdaAssetPath: string; webAdapterLayerPath
   const webAdapterLayerPath = join(root, "layer");
   mkdirSync(join(webAdapterLayerPath, "extensions"), { recursive: true });
   writeFileSync(join(webAdapterLayerPath, "bootstrap"), "#!/bin/bash\n");
-  writeFileSync(join(webAdapterLayerPath, "extensions", "lambda-adapter"), "fake");
+  writeFileSync(join(webAdapterLayerPath, "extensions", "lambda-adapter"), WEB_ADAPTER_STUB);
   return { lambdaAssetPath, webAdapterLayerPath };
 }
 

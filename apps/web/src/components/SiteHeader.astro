@@ -1,6 +1,7 @@
 ---
 import { careerDocuments, contactLinks, isProfile } from "../site-content";
-import { assistantEnabled } from "../site-profile";
+import { assistantConfig, assistantEnabled } from "../site-profile";
+import { siteEnv } from "../site-env";
 
 interface Props {
   home?: boolean;
@@ -10,7 +11,7 @@ interface Props {
 const { home = false, askOnPage = home } = Astro.props;
 const profile = (await careerDocuments()).find(isProfile);
 const hasContact = profile ? contactLinks(profile) !== null : false;
-const hasAssistant = assistantEnabled(import.meta.env.PUBLIC_ASK_API_URL);
+const hasAssistant = assistantEnabled(assistantConfig(siteEnv()).askApiUrl);
 
 function sectionHref(id: string): string {
   return home ? `#${id}` : `/#${id}`;
