@@ -7,6 +7,8 @@ import {
   askApiProjectDir,
   lambdaAssetPath,
   pythonCareerIndexPath,
+  retrievalDirectory,
+  retrievalManifestPath,
 } from "./paths.js";
 
 const skippedDirectories = new Set([
@@ -22,6 +24,18 @@ const skippedDirectories = new Set([
 
 export const lambdaAssetRequiredPaths = [
   "__init__.py",
+  "production_app.py",
+  "stream_http.py",
+  "secret_key.py",
+  "ask_request.py",
+  "local_stream.py",
+  "local_conversation.py",
+  "local_evidence.py",
+  "answer_style.py",
+  "model_providers/__init__.py",
+  "model_providers/base.py",
+  "model_providers/anthropic_api.py",
+  "model_providers/fixture.py",
   "handler.py",
   "exact_answers.py",
   "index_loader.py",
@@ -38,16 +52,23 @@ export const lambdaAssetRequiredPaths = [
   "data/career-index.json",
 ] as const;
 
+/** Where the evidence package sits inside the ask_api package, in the asset and locally. */
+export const evidenceDirectoryName = join("data", "evidence");
+export const evidenceManifestName = join("data", "evidence-manifest.json");
+
 export function stageLambdaAsset(
   sourceDir = askApiPackageDir,
   indexPath = pythonCareerIndexPath,
   destination = lambdaAssetPath,
+  evidenceDir = retrievalDirectory,
+  evidenceManifest = retrievalManifestPath,
 ): void {
   if (!statSync(indexPath, { throwIfNoEntry: false })?.isFile()) {
     throw new Error(
       "The synchronized career index is missing. Run pnpm sync:content before staging the Lambda asset.",
     );
   }
+  assertEvidencePresent(evidenceDir, evidenceManifest);
 
   rmSync(destination, { recursive: true, force: true });
   mkdirSync(destination, { recursive: true });
@@ -55,17 +76,52 @@ export function stageLambdaAsset(
   const indexDestination = join(destination, "data", "career-index.json");
   mkdirSync(dirname(indexDestination), { recursive: true });
   cpSync(indexPath, indexDestination);
+  copyEvidencePackage(evidenceDir, evidenceManifest, destination);
   installPinnedRuntimeDependencies(destination);
   removeInstallMetadata(destination);
 
   for (const required of [
     ...lambdaAssetRequiredPaths,
+    evidenceManifestName,
+    "anthropic/__init__.py",
     "boto3/__init__.py",
     "botocore/__init__.py",
   ]) {
     if (!statSync(join(destination, required), { throwIfNoEntry: false })?.isFile()) {
       throw new Error(`Lambda asset is missing ${required}.`);
     }
+  }
+}
+
+/**
+ * Copy the evidence package (the retrieval artifacts: section text and metadata, plus the
+ * manifest) into an ask_api package directory. The production app loads it from there.
+ */
+export function copyEvidencePackage(
+  evidenceDir: string,
+  evidenceManifest: string,
+  packageDir: string,
+): void {
+  assertEvidencePresent(evidenceDir, evidenceManifest);
+  const target = join(packageDir, evidenceDirectoryName);
+  rmSync(target, { recursive: true, force: true });
+  mkdirSync(target, { recursive: true });
+  for (const entry of readdirSync(evidenceDir, { withFileTypes: true })) {
+    if (entry.isFile() && (entry.name.endsWith(".txt") || entry.name.endsWith(".metadata.json"))) {
+      cpSync(join(evidenceDir, entry.name), join(target, entry.name));
+    }
+  }
+  cpSync(evidenceManifest, join(packageDir, evidenceManifestName));
+}
+
+function assertEvidencePresent(evidenceDir: string, evidenceManifest: string): void {
+  if (
+    !statSync(evidenceDir, { throwIfNoEntry: false })?.isDirectory() ||
+    !statSync(evidenceManifest, { throwIfNoEntry: false })?.isFile()
+  ) {
+    throw new Error(
+      "The evidence package is missing. Run pnpm build:retrieval before staging the Lambda asset.",
+    );
   }
 }
 

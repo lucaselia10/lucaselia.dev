@@ -1,13 +1,14 @@
 import { writeRetrievalArtifacts } from "./build-retrieval.js";
 import { checkPublicFiles, readBlocklist } from "./check-public.js";
 import {
+  askApiPackageDir,
   canonicalCareerIndexPath,
   careerIndexCopyPaths,
   lambdaAssetPath,
   retrievalDirectory,
   retrievalManifestPath,
 } from "./paths.js";
-import { stageLambdaAsset } from "./stage-lambda-asset.js";
+import { copyEvidencePackage, stageLambdaAsset } from "./stage-lambda-asset.js";
 import { synchronizeCareerIndex, validateCorpus, writeCareerIndex } from "./validate-content.js";
 
 const command = process.argv[2];
@@ -40,6 +41,15 @@ if (command === "validate") {
     console.error(`Staged Lambda asset at ${lambdaAssetPath}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Lambda asset staging failed.";
+    console.error(message);
+    process.exit(1);
+  }
+} else if (command === "sync-evidence") {
+  try {
+    copyEvidencePackage(retrievalDirectory, retrievalManifestPath, askApiPackageDir);
+    console.error(`Copied the evidence package into ${askApiPackageDir}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Evidence sync failed.";
     console.error(message);
     process.exit(1);
   }

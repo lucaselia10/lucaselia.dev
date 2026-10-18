@@ -52,7 +52,12 @@ describe("CareerPortfolioStack", () => {
           path.includes("retrieval/"),
       ),
     ).toBe(false);
-    expect(joined).not.toContain("pytest");
+    // No test runner is shipped. (anyio's optional pytest_plugin.py module is part of anyio.)
+    expect(
+      staged
+        .map((path) => path.split("/")[0] ?? "")
+        .filter((top) => /^_?pytest([-_.]|$)/.test(top)),
+    ).toEqual([]);
     expect(joined).not.toContain("pyright");
     expect(joined).not.toContain("boto3_stubs");
     expect(joined).not.toContain("retrieval_publisher");

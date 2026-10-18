@@ -23,7 +23,7 @@
     "index:content": "pnpm --filter @career-portfolio/scripts index",
     "sync:content": "pnpm --filter @career-portfolio/scripts sync",
     "stage:lambda": "pnpm --filter @career-portfolio/scripts stage-lambda",
-    "prepare:api": "pnpm validate:content && pnpm index:content && pnpm sync:content && pnpm stage:lambda",
+    "prepare:api": "pnpm validate:content && pnpm index:content && pnpm sync:content && pnpm build:retrieval && pnpm stage:lambda",
     "build:retrieval": "pnpm --filter @career-portfolio/scripts build-retrieval",
     "publish:retrieval": "pnpm build:retrieval && uv run --directory services/ask-api python -m retrieval_publisher",
     "synth": "pnpm prepare:api && pnpm --filter @career-portfolio/infrastructure exec cdk synth",
@@ -36,6 +36,8 @@
     "dev:api": "pnpm validate:content && pnpm index:content && pnpm sync:content && uv run --directory services/ask-api python dev_server.py",
     "dev:api:model": "pnpm validate:content && pnpm index:content && pnpm sync:content && pnpm build:retrieval && sh services/ask-api/scripts/dev-model-anthropic.sh",
     "dev:api:model:bedrock": "pnpm validate:content && pnpm index:content && pnpm sync:content && pnpm build:retrieval && LOCAL_MODEL_CONVERSATION=true LOCAL_MODEL_PROVIDER=bedrock uv run --directory services/ask-api python dev_server.py",
+    "dev:api:prod": "pnpm validate:content && pnpm index:content && pnpm sync:content && pnpm build:retrieval && pnpm --filter @career-portfolio/scripts sync-evidence && ASK_PROVIDER=fixture ASK_FIXTURE_DELAY_MS=150 PORT=8080 uv run --directory services/ask-api python -m ask_api.production_app",
+    "dev:api:prod:model": "pnpm validate:content && pnpm index:content && pnpm sync:content && pnpm build:retrieval && pnpm --filter @career-portfolio/scripts sync-evidence && sh services/ask-api/scripts/dev-model-anthropic.sh production",
     "dev:web": "PUBLIC_ASK_API_URL=http://127.0.0.1:8787/ask pnpm --filter @career-portfolio/web dev --host 127.0.0.1",
     "dev:web:model": "PUBLIC_ASK_API_URL=http://127.0.0.1:8787/ask PUBLIC_ASK_STREAMING=true pnpm --filter @career-portfolio/web dev --host 127.0.0.1"
   },

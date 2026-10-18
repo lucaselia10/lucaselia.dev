@@ -62,24 +62,34 @@ pnpm install
 uv sync --directory services/ask-api
 ```
 
-| Command             | What it does                                                                                  |
-| ------------------- | --------------------------------------------------------------------------------------------- |
-| `pnpm dev:api`      | Build the career index and start the local ask server on `127.0.0.1:8787`.                    |
-| `pnpm dev:web`      | Start the site on `127.0.0.1:4321`, pointed at the local ask server.                          |
-| `pnpm build:site`   | Build the production site (no assistant) into `apps/web/dist`.                                |
-| `pnpm format:check` | Check formatting (Prettier and Ruff).                                                         |
-| `pnpm lint`         | Lint TypeScript (ESLint) and Python (Ruff).                                                   |
-| `pnpm typecheck`    | Type-check the web app, CDK, scripts, and Python (pyright).                                   |
-| `pnpm test`         | Run Vitest and Pytest.                                                                        |
-| `pnpm test:browser` | Run Playwright and axe against the development and production builds.                         |
-| `pnpm check:public` | Scan the files that would be published for account IDs, home paths, internal hosts, and keys. |
-| `pnpm synth`        | Synthesize the ask API CDK app. It does not call AWS.                                         |
+| Command             | What it does                                                                                          |
+| ------------------- | ----------------------------------------------------------------------------------------------------- |
+| `pnpm dev:api`      | Build the career index and start the local ask server on `127.0.0.1:8787`.                            |
+| `pnpm dev:web`      | Start the site on `127.0.0.1:4321`, pointed at the local ask server.                                  |
+| `pnpm dev:api:prod` | Run the production ask app as Lambda runs it, on `127.0.0.1:8080/api/ask`, with the fixture provider. |
+| `pnpm build:site`   | Build the production site (no assistant) into `apps/web/dist`.                                        |
+| `pnpm format:check` | Check formatting (Prettier and Ruff).                                                                 |
+| `pnpm lint`         | Lint TypeScript (ESLint) and Python (Ruff).                                                           |
+| `pnpm typecheck`    | Type-check the web app, CDK, scripts, and Python (pyright).                                           |
+| `pnpm test`         | Run Vitest and Pytest.                                                                                |
+| `pnpm test:browser` | Run Playwright and axe against the development and production builds.                                 |
+| `pnpm check:public` | Scan the files that would be published for account IDs, home paths, internal hosts, and keys.         |
+| `pnpm synth`        | Synthesize the ask API CDK app. It does not call AWS.                                                 |
 
 Model mode is opt-in and makes paid calls:
 
 - `pnpm dev:api:model` with `pnpm dev:web:model` streams answers from the Anthropic API. The key comes from a macOS Keychain item, named by `ANTHROPIC_KEYCHAIN_ITEM`, for that process only.
 - `LOCAL_AWS_PROFILE=<profile> pnpm dev:api:model:bedrock` uses Bedrock instead.
 - `LOCAL_MODEL_CONVERSATION=fixture` streams a labeled fixture and calls no model.
+- `pnpm dev:api:prod:model` runs the production app with the Keychain key instead of the fixture.
+
+Watch the production app stream (fixture mode):
+
+```bash
+curl -N -X POST http://127.0.0.1:8080/api/ask \
+  -H 'Content-Type: application/json' -H 'Accept: application/x-ndjson' \
+  -d '{"question":"How did Lucas improve production reliability?","mode":"career_question"}'
+```
 
 Content rules (front matter schema, visibility, and the assistant flag) are in [content/README.md](content/README.md).
 

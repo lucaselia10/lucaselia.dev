@@ -467,4 +467,8 @@ def test_providers_are_not_tied_to_the_development_server() -> None:
     for path in root.glob("*.py"):
         source = path.read_text(encoding="utf-8")
         assert "dev_server" not in source, path.name
-        assert "import anthropic\n" not in source.split("def live_client", 1)[0], path.name
+        # The SDK is imported inside the functions that need it, never at module level, so
+        # importing the registry for Bedrock or the fixture does not load it.
+        module_level = [line for line in source.splitlines() if not line.startswith((" ", "\t"))]
+        assert "import anthropic" not in module_level, path.name
+        assert not any(line.startswith("from anthropic") for line in module_level), path.name

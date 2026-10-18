@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { askApiPackageDir, askApiProjectDir, repoRoot } from "./paths.js";
 import {
+  copyEvidencePackage,
   lambdaAssetRequiredPaths,
   relativeAssetPaths,
   stageLambdaAsset,
@@ -36,8 +37,9 @@ describe("Lambda asset staging", () => {
     mkdirSync(join(destination, "stale_sdk"), { recursive: true });
     writeFileSync(join(destination, "stale_sdk", "__init__.py"), "stale = True\n");
     writeFileSync(join(destination, "pytest.py"), "def test_stale():\n    pass\n");
+    const evidence = writeEvidence(root);
 
-    stageLambdaAsset(source, index, destination);
+    stageLambdaAsset(source, index, destination, evidence.directory, evidence.manifest);
 
     const staged = relativeAssetPaths(destination);
     for (const required of lambdaAssetRequiredPaths) {
@@ -46,6 +48,7 @@ describe("Lambda asset staging", () => {
     expect(readFileSync(join(destination, "data", "career-index.json"))).toEqual(
       readFileSync(index),
     );
+    expectStagedEvidence(staged, destination, evidence.manifest);
     expectPinnedRuntimeDependencies(staged);
     expect(staged.join("\n")).not.toContain("stale_sdk");
     expect(staged).not.toContain("pytest.py");
@@ -57,7 +60,8 @@ describe("Lambda asset staging", () => {
     const destination = join(mkdtempSync(join(tmpdir(), "lambda-asset-real-")), "ask-api");
     const index = join(mkdtempSync(join(tmpdir(), "lambda-index-")), "career-index.json");
     writeFileSync(index, "{}\n");
-    stageLambdaAsset(askApiPackageDir, index, destination);
+    const evidence = writeEvidence(mkdtempSync(join(tmpdir(), "lambda-evidence-")));
+    stageLambdaAsset(askApiPackageDir, index, destination, evidence.directory, evidence.manifest);
 
     const staged = relativeAssetPaths(destination);
     const joined = staged.join("\n");
@@ -73,10 +77,64 @@ describe("Lambda asset staging", () => {
     expect(staged).toContain("bedrock_generator.py");
     expect(staged).toContain("grounding_factory.py");
     expect(staged).toContain("data/career-index.json");
+    expect(staged).toContain("production_app.py");
+    expect(staged).toContain("model_providers/anthropic_api.py");
+    expect(staged).toContain("anthropic/__init__.py");
+    expectStagedEvidence(staged, destination, evidence.manifest);
     expectPinnedRuntimeDependencies(staged);
     expectAbsentFromAsset(staged);
   });
+
+  it("refuses to stage without the evidence package", () => {
+    const root = mkdtempSync(join(tmpdir(), "lambda-no-evidence-"));
+    const index = join(root, "career-index.json");
+    writeFileSync(index, "{}\n");
+
+    expect(() =>
+      stageLambdaAsset(
+        askApiPackageDir,
+        index,
+        join(root, "asset"),
+        join(root, "missing"),
+        join(root, "missing.json"),
+      ),
+    ).toThrow("Run pnpm build:retrieval");
+  });
+
+  it("copies the evidence package into a local package for the production app", () => {
+    const root = mkdtempSync(join(tmpdir(), "local-evidence-"));
+    const evidence = writeEvidence(root);
+    const packageDir = join(root, "ask_api");
+    mkdirSync(join(packageDir, "data", "evidence"), { recursive: true });
+    writeFileSync(join(packageDir, "data", "evidence", "stale.txt"), "stale\n");
+
+    copyEvidencePackage(evidence.directory, evidence.manifest, packageDir);
+
+    expectStagedEvidence(relativeAssetPaths(packageDir), packageDir, evidence.manifest);
+  });
 });
+
+function writeEvidence(root: string): { directory: string; manifest: string } {
+  const directory = join(root, "retrieval");
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "aws-sde-ii--role-description.txt"), "Section text.\n");
+  writeFileSync(join(directory, "aws-sde-ii--role-description.txt.metadata.json"), "{}\n");
+  writeFileSync(join(directory, "notes.md"), "not part of the package\n");
+  const manifest = join(root, "retrieval-manifest.json");
+  writeFileSync(manifest, '{"schemaVersion":1,"marker":"evidence"}\n');
+  return { directory, manifest };
+}
+
+function expectStagedEvidence(staged: string[], destination: string, manifest: string): void {
+  const evidence = staged.filter((path) => path.startsWith("data/evidence/"));
+  expect(evidence).toEqual([
+    "data/evidence/aws-sde-ii--role-description.txt",
+    "data/evidence/aws-sde-ii--role-description.txt.metadata.json",
+  ]);
+  expect(readFileSync(join(destination, "data", "evidence-manifest.json"))).toEqual(
+    readFileSync(manifest),
+  );
+}
 
 function expectPinnedRuntimeDependencies(staged: string[]): void {
   expect(staged).toContain("boto3/__init__.py");
@@ -146,14 +204,19 @@ function lockedRuntimeDistributions(): string[] {
     ],
     { cwd: askApiProjectDir, encoding: "utf8" },
   );
-  return output
-    .split("\n")
-    .map((line) => line.trim().replace(/\\$/, "").trim())
-    .filter((line) => line.includes("=="))
-    .map((line) => {
-      const [name, version] = line.split("==");
-      return `${name?.replaceAll("-", "_")}-${version}.dist-info`;
-    });
+  return (
+    output
+      .split("\n")
+      .map((line) => line.trim().replace(/\\$/, "").trim())
+      .filter((line) => line.includes("=="))
+      // Packages marked for the browser (Pyodide) runtime are not installed for Lambda.
+      .filter((line) => !line.includes("sys_platform == 'emscripten'"))
+      .map((line) => line.split(";")[0]?.trim() ?? "")
+      .map((line) => {
+        const [name, version] = line.split("==");
+        return `${name?.replaceAll("-", "_")}-${version}.dist-info`;
+      })
+  );
 }
 
 function writePythonFile(root: string, path: string, contents: string): void {

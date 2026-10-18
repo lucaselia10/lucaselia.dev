@@ -24,6 +24,8 @@ generated/
 infrastructure/asset/
 apps/web/public/career-index.json
 services/ask-api/src/ask_api/data/career-index.json
+services/ask-api/src/ask_api/data/evidence/
+services/ask-api/src/ask_api/data/evidence-manifest.json
 
 # Per-user Claude Code overrides. The shared rules in .claude/settings.json are committed.
 .claude/settings.local.json

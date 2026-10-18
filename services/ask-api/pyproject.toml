@@ -1,9 +1,10 @@
 [project]
 name = "ask-api"
 version = "0.1.0"
-description = "Deterministic exact-fact Lambda handler for POST /ask."
+description = "Career assistant API: the production streaming app and the exact-answer handler."
 requires-python = ">=3.13"
 dependencies = [
+    "anthropic>=1.13.0",
     "boto3>=1.43.105",
 ]
 
@@ -13,7 +14,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "anthropic>=1.13.0",
     "boto3-stubs[bedrock-agent-runtime,bedrock-runtime]>=1.43.105",
     "botocore[crt]>=1.43.105",
     "pyright>=1.1.414",

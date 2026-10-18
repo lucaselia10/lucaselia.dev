@@ -13,32 +13,18 @@ from __future__ import annotations
 import base64
 import json
 import uuid
-from typing import cast
 
+from ask_api.ask_request import RequestError, string_key_dict, validated_ask_request
 from ask_api.exact_answers import FALLBACK_ANSWER, answer_career_question, suggested_questions
 from ask_api.grounding import CareerAnswerer, PublicCareerAnswer
 from ask_api.grounding_factory import configured_grounding_service
 from ask_api.index_loader import CareerIndexError
 
-ALLOWED_MODES = frozenset({"career_question", "job_comparison"})
-ALLOWED_ROLES = frozenset({"user", "assistant"})
-REQUEST_FIELDS = frozenset({"question", "mode", "history"})
-MESSAGE_FIELDS = frozenset({"role", "content"})
-MAX_TEXT_LENGTH = 8000
-MAX_HISTORY_MESSAGES = 20
 JOB_COMPARISON_ANSWER = (
     "Job comparison is not implemented. No model was called and no career material was compared."
 )
 INDEX_UNAVAILABLE = "The career index is unavailable."
 ASSISTANT_UNAVAILABLE = "The career assistant is temporarily unavailable."
-
-
-class RequestError(Exception):
-    """A caller-facing validation failure with an HTTP status code."""
-
-    def __init__(self, message: str, status_code: int = 400) -> None:
-        super().__init__(message)
-        self.status_code = status_code
 
 
 def handler(
@@ -59,7 +45,7 @@ def handler(
     request_id = _request_id(event)
     try:
         payload = _payload_from_event(event)
-        question, mode, history = _validate_payload(payload)
+        question, mode, history = validated_ask_request(payload)
     except RequestError as error:
         return _json_response(
             error.status_code,
@@ -156,7 +142,7 @@ def _request_id(event: dict[str, object]) -> str:
     Local and direct invocations have no gateway ID, so they receive a new
     UUIDv4 for that invocation.
     """
-    request_context = _string_key_dict(event.get("requestContext"))
+    request_context = string_key_dict(event.get("requestContext"))
     if request_context is not None:
         supplied = request_context.get("requestId")
         if isinstance(supplied, str) and supplied.strip() != "":
@@ -176,9 +162,9 @@ def _payload_from_event(event: dict[str, object]) -> dict[str, object]:
 
 
 def _http_method(event: dict[str, object]) -> str | None:
-    request_context = _string_key_dict(event.get("requestContext"))
+    request_context = string_key_dict(event.get("requestContext"))
     if request_context is not None:
-        http = _string_key_dict(request_context.get("http"))
+        http = string_key_dict(request_context.get("http"))
         if http is not None:
             method = http.get("method")
             if isinstance(method, str):
@@ -207,67 +193,10 @@ def _parse_body(body: object, is_base64_encoded: bool) -> dict[str, object]:
     except json.JSONDecodeError as error:
         raise RequestError("Request body must be valid JSON.") from error
 
-    payload = _string_key_dict(parsed)
+    payload = string_key_dict(parsed)
     if payload is None:
         raise RequestError("Request body must be a JSON object.")
     return payload
-
-
-def validated_ask_request(
-    payload: dict[str, object],
-) -> tuple[str, str, tuple[tuple[str, str], ...]]:
-    """Validate an ask body. The Lambda handler and the local stream share this."""
-    return _validate_payload(payload)
-
-
-def _validate_payload(payload: dict[str, object]) -> tuple[str, str, tuple[tuple[str, str], ...]]:
-    unsupported = sorted(set(payload) - REQUEST_FIELDS)
-    if unsupported:
-        names = ", ".join(unsupported)
-        raise RequestError(f"Request contains unsupported fields: {names}.")
-
-    question = payload.get("question")
-    if not isinstance(question, str) or question.strip() == "":
-        raise RequestError("question is required.")
-    if len(question) > MAX_TEXT_LENGTH:
-        raise RequestError("question is too long.")
-
-    mode = payload.get("mode")
-    if not isinstance(mode, str) or mode not in ALLOWED_MODES:
-        raise RequestError("mode must be career_question or job_comparison.")
-
-    history: tuple[tuple[str, str], ...] = ()
-    if "history" in payload:
-        history = _validate_history(payload["history"])
-
-    return question, mode, history
-
-
-def _validate_history(history: object) -> tuple[tuple[str, str], ...]:
-    messages = _object_list(history)
-    if messages is None:
-        raise RequestError("history must be an array.")
-    if len(messages) > MAX_HISTORY_MESSAGES:
-        raise RequestError("history must contain at most 20 messages.")
-
-    parsed: list[tuple[str, str]] = []
-    for index, item in enumerate(messages):
-        message = _string_key_dict(item)
-        if message is None:
-            raise RequestError(f"history[{index}] must be an object.")
-        unsupported = sorted(set(message) - MESSAGE_FIELDS)
-        if unsupported:
-            raise RequestError(f"history[{index}] contains unsupported fields.")
-        role = message.get("role")
-        content = message.get("content")
-        if not isinstance(role, str) or role not in ALLOWED_ROLES:
-            raise RequestError(f"history[{index}].role must be user or assistant.")
-        if not isinstance(content, str):
-            raise RequestError(f"history[{index}].content must be a string.")
-        if len(content) > MAX_TEXT_LENGTH:
-            raise RequestError(f"history[{index}].content is too long.")
-        parsed.append((role, content))
-    return tuple(parsed)
 
 
 def _json_response(status_code: int, body: object) -> dict[str, object]:
@@ -276,21 +205,3 @@ def _json_response(status_code: int, body: object) -> dict[str, object]:
         "headers": {"content-type": "application/json"},
         "body": json.dumps(body),
     }
-
-
-def _string_key_dict(value: object) -> dict[str, object] | None:
-    if not isinstance(value, dict):
-        return None
-    raw = cast(dict[object, object], value)
-    mapped: dict[str, object] = {}
-    for key, item in raw.items():
-        if not isinstance(key, str):
-            return None
-        mapped[key] = item
-    return mapped
-
-
-def _object_list(value: object) -> list[object] | None:
-    if not isinstance(value, list):
-        return None
-    return cast(list[object], value)

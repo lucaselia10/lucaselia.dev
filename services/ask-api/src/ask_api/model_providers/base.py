@@ -31,6 +31,14 @@ class ModelSetupError(Exception):
         self.public_message = message
 
 
+class ModelPaused(Exception):
+    """The provider refused because of a spend limit or overload. Callers pause for a while."""
+
+
+class ModelBusy(Exception):
+    """The provider rate-limited the request. Not a spend limit; the next request may work."""
+
+
 @dataclass(frozen=True)
 class ModelRequest:
     """One answer to generate. Real providers use system and user_text."""

@@ -1,7 +1,11 @@
 """The Anthropic API (Claude) via streaming Messages.
 
-Live mode needs ANTHROPIC_API_KEY in the process environment. The key is passed to
-the SDK client and is never logged, echoed, or included in an error.
+Local live mode reads ANTHROPIC_API_KEY from the process environment; the production app
+passes a key it read from Secrets Manager. The key goes to the SDK client only and is never
+logged, echoed, or included in an error.
+
+Spend-limit and overload errors become ModelPaused, and other rate limits ModelBusy, whether
+the SDK raises them when the stream opens or while it is being read.
 """
 
 from __future__ import annotations
@@ -15,7 +19,9 @@ from ask_api.model_providers.base import (
     CONNECT_TIMEOUT_SECONDS,
     MODEL_MESSAGE,
     STREAM_DEADLINE_SECONDS,
+    ModelBusy,
     ModelEvent,
+    ModelPaused,
     ModelRequest,
     ModelSetupError,
     StreamFailure,
@@ -37,6 +43,10 @@ _ACCEPTS_TEMPERATURE = re.compile(r"^claude-(?:haiku|sonnet|opus)-4(?:-[0-6])?(?
 API_KEY_MESSAGE = "Anthropic model mode needs ANTHROPIC_API_KEY in the process environment."
 #: At most one retry, matching the one-attempt Nova budget plus the requested retry.
 MAX_RETRIES = 1
+#: A spend limit set on the organization or a workspace returns HTTP 400 with this prefix.
+SPEND_LIMIT_PREFIX = "You have reached your specified"
+#: The usage tier's monthly cap returns a 429 rate_limit_error carrying this code.
+SPEND_CAP_CODE = "enforced_spend_limit_reached"
 
 
 if TYPE_CHECKING:
@@ -58,15 +68,46 @@ class AnthropicProvider:
         self._model_id = model_id
 
     def open_stream(self, request: ModelRequest) -> Iterator[ModelEvent]:
-        stream = self._client.messages.create(
-            model=self._model_id,
-            max_tokens=request.max_tokens,
-            system=request.system,
-            messages=[{"role": "user", "content": request.user_text}],
-            stream=True,
-            extra_body=sampling_body(self._model_id, request.temperature),
-        )
+        try:
+            stream = self._client.messages.create(
+                model=self._model_id,
+                max_tokens=request.max_tokens,
+                system=request.system,
+                messages=[{"role": "user", "content": request.user_text}],
+                stream=True,
+                extra_body=sampling_body(self._model_id, request.temperature),
+            )
+        except Exception as error:
+            classified = classify_error(error)
+            if classified is None:
+                raise
+            raise classified from None
         return _events(stream)
+
+
+def classify_error(error: BaseException) -> ModelPaused | ModelBusy | None:
+    """Recognize spend-limit, overload, and rate-limit errors. Anything else returns None.
+
+    A mid-stream error event reaches us as an APIStatusError whose HTTP status is the
+    stream's 200, so the error type in the body decides, not the status alone.
+    """
+    import anthropic
+
+    if not isinstance(error, anthropic.APIStatusError):
+        return None
+    detail = field(error.body, "error")
+    kind = field(detail, "type")
+    if error.status_code == 529 or kind == "overloaded_error":
+        return ModelPaused()
+    if error.status_code == 429 or kind == "rate_limit_error":
+        if field(field(detail, "details"), "error_code") == SPEND_CAP_CODE:
+            return ModelPaused()
+        return ModelBusy()
+    message = field(detail, "message")
+    if kind == "invalid_request_error" and isinstance(message, str):
+        if message.startswith(SPEND_LIMIT_PREFIX):
+            return ModelPaused()
+    return None
 
 
 def sampling_body(model_id: str, temperature: float) -> dict[str, object] | None:
@@ -106,6 +147,11 @@ def _events(stream: Iterable[object]) -> Iterator[ModelEvent]:
                 yield StreamStop()
             elif kind == "error":
                 yield StreamFailure("service")
+    except Exception as error:
+        classified = classify_error(error)
+        if classified is None:
+            raise
+        raise classified from None
     finally:
         close = getattr(stream, "close", None)
         if callable(close):

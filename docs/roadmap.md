@@ -124,11 +124,11 @@ Direct local evidence is not Knowledge Base retrieval. Production retrieval stay
 
 ## Slice 2 — Production streaming architecture and deployment integration
 
-**Status:** not started. It starts only after Slice 1 is accepted.
+**Status:** design round done; nothing is implemented. [ADR-009](adr/009-production-assistant.md) (Proposed) records the owner's decisions and the recommended transport: a Lambda function URL in `RESPONSE_STREAM` mode with the Lambda Web Adapter and a small Python app, behind the site's CloudFront at `/api/*` with OAC and WAF. It uses the Anthropic API, the full evidence package instead of a Knowledge Base, and moves to `us-east-1`. The [production assistant specification](design/production-assistant.md) has the NDJSON contract, limits, failure modes, threat and cost model, the five implementation rounds, and the user-run steps. Implementation starts after the owner answers the open questions there and accepts the ADR.
 
-**Objective:** Carry the validated conversational experience through the production AWS request path and the approved retrieval pipeline.
+**Objective:** Carry the validated conversational experience through the production AWS request path.
 
-This slice begins with architecture investigation, then implementation. Its deployment step is the ask-path portion of Phase 8. Phases 5 through 7 still settle hosting, identity, and cost before that deployment. Writing this milestone does not authorize account changes, bootstrap, deployment, publication, or ingestion. The checks in [deployment readiness](deployment-readiness.md) still apply.
+This slice began with architecture investigation, recorded in ADR-009. The text below is the original scope. Where it names the Bedrock Knowledge Base, ADR-009 proposes replacing it. Its deployment step is the ask-path portion of Phase 8. Phases 5 through 7 still settle hosting, identity, and cost before that deployment. Writing this milestone does not authorize account changes, bootstrap, deployment, publication, or ingestion. The checks in [deployment readiness](deployment-readiness.md) still apply.
 
 Slice 2 also decides the production model provider (the Anthropic API, Bedrock, or both, behind the `ask_api.model_providers` interface) and whether the small approved corpus is passed directly as evidence instead of retrieved from the Knowledge Base ([ADR-008](adr/008-anthropic-api-for-model-answers.md)).
 

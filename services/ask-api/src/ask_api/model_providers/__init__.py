@@ -11,7 +11,9 @@ from collections.abc import Mapping
 
 from ask_api.model_providers import anthropic_api, bedrock
 from ask_api.model_providers.base import (
+    ModelBusy,
     ModelEvent,
+    ModelPaused,
     ModelProvider,
     ModelRequest,
     ModelSetupError,
@@ -63,7 +65,9 @@ __all__ = [
     "PROVIDER_MESSAGE",
     "PROVIDER_VARIABLE",
     "FixtureProvider",
+    "ModelBusy",
     "ModelEvent",
+    "ModelPaused",
     "ModelProvider",
     "ModelRequest",
     "ModelSetupError",

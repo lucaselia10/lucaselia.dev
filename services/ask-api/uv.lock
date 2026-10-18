@@ -47,12 +47,12 @@ name = "ask-api"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anthropic" },
     { name = "boto3" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "anthropic" },
     { name = "boto3-stubs", extra = ["bedrock-agent-runtime", "bedrock-runtime"] },
     { name = "botocore", extra = ["crt"] },
     { name = "pyright" },
@@ -61,11 +61,13 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "boto3", specifier = ">=1.43.105" }]
+requires-dist = [
+    { name = "anthropic", specifier = ">=1.13.0" },
+    { name = "boto3", specifier = ">=1.43.105" },
+]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "anthropic", specifier = ">=1.13.0" },
     { name = "boto3-stubs", extras = ["bedrock-agent-runtime", "bedrock-runtime"], specifier = ">=1.43.105" },
     { name = "botocore", extras = ["crt"], specifier = ">=1.43.105" },
     { name = "pyright", specifier = ">=1.1.414" },

@@ -8,6 +8,7 @@
     "index": "tsx src/cli.ts index",
     "sync": "tsx src/cli.ts sync",
     "stage-lambda": "tsx src/cli.ts stage-lambda",
+    "sync-evidence": "tsx src/cli.ts sync-evidence",
     "build-retrieval": "tsx src/cli.ts build-retrieval",
     "check-public": "tsx src/cli.ts check-public",
     "typecheck": "tsc --noEmit",

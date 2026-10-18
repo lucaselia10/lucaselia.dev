@@ -192,7 +192,7 @@ def test_real_anthropic_sdk_omits_temperature_for_models_that_reject_it() -> Non
     assert anthropic_provider.sampling_body("claude-haiku-5-5", 0.0) is None
 
 
-def test_real_anthropic_sdk_errors_become_unavailable_without_retry_storms() -> None:
+def test_real_anthropic_sdk_errors_become_unavailable_or_paused_without_retry_storms() -> None:
     unauthorized = Recorder(
         401,
         json.dumps(
@@ -222,13 +222,59 @@ def test_real_anthropic_sdk_errors_become_unavailable_without_retry_storms() -> 
         b'{"type":"error","error":{"type":"overloaded_error","message":"busy"}}',
         "application/json",
     )
-    assert run(real_anthropic(overloaded))[-1]["code"] == "unavailable"
+    assert run(real_anthropic(overloaded))[-1]["code"] == "paused"
     assert len(overloaded.requests) == 2  # one attempt plus at most one retry
 
     midstream = recorded_messages_stream(("Partial",))[:3]
     midstream.append({"type": "error", "error": {"type": "overloaded_error", "message": "busy"}})
     broken = Recorder(200, sse(midstream), "text/event-stream")
-    assert run(real_anthropic(broken))[-1]["code"] == "unavailable"
+    assert run(real_anthropic(broken))[-1]["code"] == "paused"
+
+    midstream_api = recorded_messages_stream(("Partial",))[:3]
+    midstream_api.append({"type": "error", "error": {"type": "api_error", "message": "x"}})
+    failed = Recorder(200, sse(midstream_api), "text/event-stream")
+    assert run(real_anthropic(failed))[-1]["code"] == "unavailable"
+
+
+def _error_body(kind: str, message: str, details: dict[str, object] | None = None) -> bytes:
+    error: dict[str, object] = {"type": kind, "message": message}
+    if details is not None:
+        error["details"] = details
+    return json.dumps({"type": "error", "error": error}).encode()
+
+
+def test_real_anthropic_sdk_spend_limits_pause_and_rate_limits_report_busy() -> None:
+    workspace_limit = Recorder(
+        400,
+        _error_body(
+            "invalid_request_error",
+            "You have reached your specified workspace API usage limits. Access resumes later.",
+        ),
+        "application/json",
+    )
+    assert run(real_anthropic(workspace_limit))[-1]["code"] == "paused"
+    assert len(workspace_limit.requests) == 1  # a 400 is not retried
+
+    tier_cap = Recorder(
+        429,
+        _error_body(
+            "rate_limit_error",
+            "You have reached your API usage limits.",
+            {"error_code": "enforced_spend_limit_reached"},
+        ),
+        "application/json",
+    )
+    assert run(real_anthropic(tier_cap))[-1]["code"] == "paused"
+
+    rate_limited = Recorder(
+        429, _error_body("rate_limit_error", "Too many requests."), "application/json"
+    )
+    assert run(real_anthropic(rate_limited))[-1]["code"] == "busy"
+
+    other_bad_request = Recorder(
+        400, _error_body("invalid_request_error", "max_tokens is too large."), "application/json"
+    )
+    assert run(real_anthropic(other_bad_request))[-1]["code"] == "unavailable"
 
 
 def test_live_client_settings_are_accepted_by_the_real_constructor() -> None:

@@ -1,4 +1,7 @@
-"""Stream a local model answer from the direct-evidence package.
+"""Stream a model answer from the direct-evidence package.
+
+Local model mode (dev_server.py) and the production app (ask_api.production_app) both
+use this module unchanged.
 
 The provider (Anthropic, Bedrock, or the in-process fixture) only turns a request
 into ModelEvents. This module owns everything else, identically for every provider:
@@ -37,6 +40,8 @@ from ask_api.local_evidence import (
     load_evidence_package,
 )
 from ask_api.model_providers import (
+    ModelBusy,
+    ModelPaused,
     ModelProvider,
     ModelRequest,
     ModelSetupError,
@@ -56,9 +61,13 @@ VALIDATION_MESSAGE = "The answer could not be verified and was discarded."
 INTERRUPTED_MESSAGE = "The response was interrupted. Please try again."
 TIMEOUT_MESSAGE = "The request timed out. Please try again."
 CANCELLED_MESSAGE = "The request was cancelled."
+PAUSED_MESSAGE = "The career assistant is paused for now. The career pages are still here."
+BUSY_MESSAGE = "The career assistant is busy. Please try again in a minute."
 
 __all__ = [
+    "BUSY_MESSAGE",
     "MODEL_MESSAGE",
+    "PAUSED_MESSAGE",
     "SETUP_MESSAGE",
     "STREAM_DEADLINE_SECONDS",
     "LocalModelMode",
@@ -133,6 +142,12 @@ def iter_model_events(
         stream = provider.open_stream(build_model_request(question, history, package))
     except ModelSetupError:
         raise
+    except ModelPaused:
+        yield _error("paused", PAUSED_MESSAGE, request_id)
+        return
+    except ModelBusy:
+        yield _error("busy", BUSY_MESSAGE, request_id)
+        return
     except Exception as error:
         if on_setup_error is not None:
             on_setup_error(error)
@@ -168,6 +183,12 @@ def iter_model_events(
                 else:
                     yield _error("validation", VALIDATION_MESSAGE, request_id, usage)
                 return
+    except ModelPaused:
+        yield _error("paused", PAUSED_MESSAGE, request_id, usage)
+        return
+    except ModelBusy:
+        yield _error("busy", BUSY_MESSAGE, request_id, usage)
+        return
     except Exception:
         yield _error("unavailable", UNAVAILABLE_MESSAGE, request_id, usage)
         return

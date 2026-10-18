@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 
 from ask_api.exact_answers import FALLBACK_ANSWER
 from ask_api.local_conversation import TokenUsage
@@ -25,8 +26,23 @@ class FixtureProvider:
     name = NAME
     fixture = True
 
+    def __init__(
+        self, delay_seconds: float = 0.0, sleep: Callable[[float], None] = time.sleep
+    ) -> None:
+        # A pause before each text chunk, so a local run visibly streams. Tests leave it at 0.
+        self._delay_seconds = delay_seconds
+        self._sleep = sleep
+
     def open_stream(self, request: ModelRequest) -> Iterator[ModelEvent]:
-        return iter(_events(request))
+        if self._delay_seconds <= 0:
+            return iter(_events(request))
+        return self._paced(_events(request))
+
+    def _paced(self, events: list[ModelEvent]) -> Iterator[ModelEvent]:
+        for event in events:
+            if isinstance(event, TextDelta):
+                self._sleep(self._delay_seconds)
+            yield event
 
 
 def _events(request: ModelRequest) -> list[ModelEvent]:

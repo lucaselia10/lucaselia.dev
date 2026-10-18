@@ -1,5 +1,7 @@
 #!/bin/sh
 # Start the local ask API in Anthropic model mode (used by `pnpm dev:api:model`).
+# With the argument `production`, start the production app instead, as Lambda runs it but on
+# this machine (used by `pnpm dev:api:prod:model`); it serves POST /api/ask on port 8080.
 #
 # The API key is read from a macOS Keychain item and is handed to this one server process
 # only: it is not exported to the calling shell, not passed as a command-line argument, and
@@ -26,6 +28,15 @@ if ! key="$(security find-generic-password -s "$item" -w 2>/dev/null)" || [ -z "
 fi
 
 cd "$(dirname "$0")/.."
+
+if [ "${1:-}" = "production" ]; then
+  # The production app reads ANTHROPIC_API_KEY only outside Lambda; in Lambda it reads
+  # Secrets Manager. It never reports token counts or cost.
+  ASK_PROVIDER=anthropic \
+  PORT="${PORT:-8080}" \
+  ANTHROPIC_API_KEY="$key" \
+  exec uv run python -m ask_api.production_app
+fi
 
 # Haiku 4.5 list prices, per million tokens. Override either variable to change the estimate.
 ASK_INPUT_USD_PER_MILLION="${ASK_INPUT_USD_PER_MILLION:-1}" \

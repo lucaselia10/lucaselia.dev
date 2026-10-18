@@ -1,16 +1,21 @@
 """Development-only HTTP adapter for the ask Lambda handler.
 
 This file lives outside the ask_api package so the Lambda asset does not
-include it. It binds to loopback, wraps the production handler, and does not
+include it. It binds to loopback, wraps the exact-answer handler, and does not
 log questions, answers, citations, or career content. Each POST writes one
 stderr line with the request ID, the outcome, and token counts only.
+
+The NDJSON stream path shares its request limits, parsing, framing, and outcome
+reporting with the production app through ask_api.stream_http, and its answer
+stream through ask_api.local_stream. What stays here is local only: CORS for the
+Astro dev server, the deterministic JSON path, the local model-mode switch, and the
+token and cost fields the local UI shows.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 import traceback
 import uuid
@@ -19,7 +24,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import cast
 
-from ask_api.handler import RequestError, handler, validated_ask_request
+from ask_api.ask_request import RequestError
+from ask_api.handler import handler
 from ask_api.local_stream import (
     MODEL_MESSAGE,
     SETUP_MESSAGE,
@@ -35,17 +41,25 @@ from ask_api.model_providers import (
     check_provider,
     create_provider,
 )
+from ask_api.stream_http import (
+    MAX_STREAM_BODY_BYTES,
+    NDJSON_CONTENT_TYPE,
+    error_name,
+    ndjson_line,
+    observe,
+    parse_stream_request,
+    token_counts,
+    write_chunked,
+)
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
-MAX_BODY_BYTES = 16 * 1024
-MAX_STREAM_BODY_BYTES = 48 * 1024
+#: The production app's body limit, for JSON and streaming requests alike.
+MAX_BODY_BYTES = MAX_STREAM_BODY_BYTES
 ALLOWED_ORIGINS = frozenset({"http://localhost:4321", "http://127.0.0.1:4321"})
 ALLOW_METHODS = "POST, OPTIONS"
 ALLOW_HEADERS = "Content-Type"
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_OUTCOME_CODE = re.compile(r"^[a-z_]{1,32}$")
-_ERROR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,80}$")
 
 
 class HttpResult:
@@ -72,7 +86,7 @@ def handle_exchange(method: str, path: str, headers: Mapping[str, str], body: by
     """Handle one local /ask exchange. A stream is collected for callers that want bytes."""
     opened = open_exchange(method, path, headers, body)
     if isinstance(opened, StreamResult):
-        return HttpResult(opened.status, opened.headers, b"".join(_ndjson_lines(opened.events)))
+        return HttpResult(opened.status, opened.headers, b"".join(map(ndjson_line, opened.events)))
     return opened
 
 
@@ -110,8 +124,7 @@ def _open_exchange(
             {"message": "Only POST is supported.", "requestId": request_id},
             {"Allow": ALLOW_METHODS, **cors},
         )
-    limit = MAX_STREAM_BODY_BYTES if _wants_stream(headers) else MAX_BODY_BYTES
-    if len(body) > limit:
+    if len(body) > MAX_BODY_BYTES:
         return _json_result(
             413,
             {"message": "Request body is too large.", "requestId": request_id},
@@ -169,12 +182,13 @@ class AskDevHandler(BaseHTTPRequestHandler):
                 )
             )
             return None
-        limit = _body_limit(dict(self.headers.items()))
-        if length < 0 or length > limit:
+        if length < 0 or length > MAX_BODY_BYTES:
             path = self.path.split("?", 1)[0]
             self.close_connection = True
             self._send(
-                handle_exchange(self.command, path, dict(self.headers.items()), b"x" * (limit + 1))
+                handle_exchange(
+                    self.command, path, dict(self.headers.items()), b"x" * (MAX_BODY_BYTES + 1)
+                )
             )
             return None
         return self.rfile.read(length)
@@ -193,14 +207,7 @@ class AskDevHandler(BaseHTTPRequestHandler):
             self.send_header(name, value)
         self.send_header("Transfer-Encoding", "chunked")
         self.end_headers()
-        try:
-            for line in _ndjson_lines(result.events):
-                self.wfile.write(f"{len(line):X}\r\n".encode("ascii"))
-                self.wfile.write(line)
-                self.wfile.write(b"\r\n")
-                self.wfile.flush()
-            self.wfile.write(b"0\r\n\r\n")
-        except (BrokenPipeError, ConnectionResetError):
+        if not write_chunked(self.wfile, result.events):
             self.close_connection = True
 
     def log_message(self, format: str, *args: object) -> None:
@@ -314,58 +321,29 @@ def _stream_exchange(
     body: bytes, request_id: str, cors: dict[str, str]
 ) -> HttpResult | StreamResult:
     try:
-        payload = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return _json_result(
-            400, {"message": "Request body is invalid.", "requestId": request_id}, cors
-        )
-    if not isinstance(payload, dict):
-        return _json_result(
-            400, {"message": "Request body is invalid.", "requestId": request_id}, cors
-        )
-    try:
-        question, mode, history = validated_ask_request(cast(dict[str, object], payload))
+        ask = parse_stream_request(body)
     except RequestError as error:
         return _json_result(400, {"message": str(error), "requestId": request_id}, cors)
-    if mode != "career_question":
+    if ask.mode != "career_question":
         return _json_exchange(body, request_id, cors)
     if local_model_mode() is LocalModelMode.OFF:
         return _json_result(503, {"message": SETUP_MESSAGE, "requestId": request_id}, cors)
     try:
-        events = stream_events(question, history, request_id)
+        events = stream_events(ask.question, ask.history, request_id)
     except LocalSetupError as error:
         return _json_result(503, {"message": error.public_message, "requestId": request_id}, cors)
     headers = {
-        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Content-Type": NDJSON_CONTENT_TYPE,
         "Cache-Control": "no-store",
         **cors,
     }
-    return StreamResult(200, headers, _observed(events, request_id))
-
-
-def _observed(events: Iterator[dict[str, object]], request_id: str) -> Iterator[dict[str, object]]:
-    """Pass events through, then report the outcome once the stream ends or closes."""
-    outcome = "disconnected"
-    usage: object = None
-    try:
-        for event in events:
-            kind = event.get("type")
-            if kind == "done":
-                outcome = "done"
-                usage = event.get("usage")
-            elif kind == "error":
-                code = event.get("code")
-                safe = code if isinstance(code, str) and _OUTCOME_CODE.match(code) else "unknown"
-                outcome = f"error_{safe}"
-                usage = event.get("usage")
-            yield event
-    finally:
-        _report(request_id, outcome, usage)
+    observed = observe(events, lambda outcome, usage: _report(request_id, outcome, usage))
+    return StreamResult(200, headers, observed)
 
 
 def _report(request_id: str, outcome: str, usage: object) -> None:
     """One stderr line per request. Never the question, answer, prompt, or evidence."""
-    input_tokens, output_tokens = _token_counts(usage)
+    input_tokens, output_tokens = token_counts(usage)
     sys.stderr.write(
         f"ask request={request_id} outcome={outcome} "
         f"input_tokens={input_tokens} output_tokens={output_tokens}\n"
@@ -384,11 +362,6 @@ def _report_setup_error(request_id: str, error: BaseException) -> None:
     if os.environ.get("LOCAL_DEBUG_TRACEBACK", "").strip() == "1":
         for line in safe_traceback(error):
             sys.stderr.write(f"ask setup_traceback request={request_id} {line}\n")
-
-
-def error_name(error: BaseException) -> str:
-    name = type(error).__name__
-    return name if _ERROR_NAME.match(name) else "UnknownError"
 
 
 def safe_traceback(error: BaseException) -> list[str]:
@@ -411,31 +384,11 @@ def safe_traceback(error: BaseException) -> list[str]:
     return lines
 
 
-def _token_counts(usage: object) -> tuple[str, str]:
-    if not isinstance(usage, dict):
-        return "-", "-"
-    counts = cast(dict[str, object], usage)
-    incoming = counts.get("inputTokens")
-    outgoing = counts.get("outputTokens")
-    if type(incoming) is not int or type(outgoing) is not int:
-        return "-", "-"
-    return str(incoming), str(outgoing)
-
-
-def _body_limit(headers: Mapping[str, str]) -> int:
-    return MAX_STREAM_BODY_BYTES if _wants_stream(headers) else MAX_BODY_BYTES
-
-
 def _wants_stream(headers: Mapping[str, str]) -> bool:
     accept = _header(headers, "accept")
     if accept is None:
         return False
     return "application/x-ndjson" in accept.lower()
-
-
-def _ndjson_lines(events: Iterator[dict[str, object]]) -> Iterator[bytes]:
-    for event in events:
-        yield (json.dumps(event, separators=(",", ":")) + "\n").encode("utf-8")
 
 
 def _optional_env(name: str) -> str | None:
