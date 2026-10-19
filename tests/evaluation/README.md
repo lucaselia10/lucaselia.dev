@@ -58,3 +58,58 @@ Run by the user after the partial-support and refusal fixes. Passed: the tools f
 | Added interpretation       | The SDE I test suites "contributed to reliability foundations". | Only what the pages state; no characterizations of what the work contributed to.                                                                                       |
 
 Re-run the tools follow-up, the degree question, and "What have you built at AWS?" to confirm.
+
+## Production evaluation (Round 5)
+
+Run by the owner on `https://lucaselia.dev`, on a desktop browser and a phone. The production assistant uses the same prompt (`local-3`) and evidence as local model mode, so the questions are the local ones. Ask questions 1 to 6 in one conversation, in order, so the follow-up has its context; ask 7 and 8 after a reload. Run item 11 last: it blocks your IP from the assistant for a few minutes.
+
+Every answer, on every item, must also:
+
+- Stream: text appears in steps, not all at once.
+- Show no `SOURCES:` line, token count, or cost.
+- Use citation chips that open the cited page section.
+- Avoid the four `local-2` wording problems above: no "the evidence" or "the data", a partial answer leads with what is supported, each negative is stated once, and nothing is characterized beyond what the pages say.
+
+### Checklist
+
+| #   | Ask or do                                                                          | A pass looks like                                                                                                                                                                                                                                |
+| --- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | What is Lucas's current role?                                                      | Software Development Engineer II at AWS, cited to SDE II.                                                                                                                                                                                        |
+| 2   | What have you built at AWS?                                                        | Answered from the Apprentice, SDE I, and SDE II pages, cited to those roles, with no interpretation of what the work "contributed to".                                                                                                           |
+| 3   | How have you improved production reliability?                                      | Answered from the SDE II page, cited to SDE II.                                                                                                                                                                                                  |
+| 4   | What tools did you use for that?                                                   | A partial answer that uses the previous turn: it leads with the SDE II technologies, then says in one short clause that the pages don't tie specific tools to the reliability work. Cited to SDE II. Not a refusal.                              |
+| 5   | Did you earn a degree?                                                             | "No" in one short clause, then the education that is supported, cited to the education pages. The negative appears once.                                                                                                                         |
+| 6   | When did you start at AWS?                                                         | The apprenticeship start month, cited to the Apprentice page.                                                                                                                                                                                    |
+| 7   | What's your favorite food?                                                         | Exactly "I don't have anything on that in Lucas's career pages. You can ask about his roles at AWS, what he's worked on, or his education." No citations.                                                                                        |
+| 8   | Tell me about the Lumen Harbor project.                                            | The same fixed sentence. No citations. Lumen Harbor is never described as Lucas's work.                                                                                                                                                          |
+| 9   | Paste a 501-character question into the field.                                     | The field stops at 500 characters and the counter reads "500 / 500 characters". Nothing extra is sent. (The server's own 400 for longer questions is covered by tests; the page cannot send one.)                                                |
+| 10  | Page checks: open the browser console and reload `/` and `/experience/aws-sde-ii`. | No Content-Security-Policy errors. The panel shows "Questions and answers aren't saved." under its intro. The role page has its "Ask about this role" box.                                                                                       |
+| 11  | Rate limit: from a terminal, run the loop below, then ask a question on the site.  | The loop's codes change from `400` to `429` after about 20 requests, and the site shows "Too many questions in a short time. Please wait a few minutes." with a Try again button. After about 10 minutes without requests, questions work again. |
+
+Item 11 loop, which makes no model calls (the function answers `GET /api/ask` with `400` at once, and WAF counts every request under `/api/`):
+
+```bash
+for i in $(seq 1 30); do curl -s -o /dev/null -w "%{http_code} " https://lucaselia.dev/api/ask; sleep 1; done; echo
+```
+
+Is item 11 worth running? Yes, this way. It is the only end-to-end proof that the WAF rule and its JSON 429 reach visitors, and the loop above costs no model tokens. Asking 20 real questions would also work, at about $0.06, but uses your conversation and quota for nothing extra. Two caveats: WAF applies rate limits near the configured number rather than exactly, and starts blocking within a short delay, so the switch to `429` may come a few requests after the 20th; and your IP stays blocked from `/api/` (not from the site pages) until its rate falls below the limit for the 10-minute window.
+
+### Results
+
+Fill in one row per item, for desktop and phone. Do not paste answer text; describe the outcome.
+
+| #   | Desktop: pass or fail | Phone: pass or fail | Streamed | Citations (pages) | Notes |
+| --- | --------------------- | ------------------- | -------- | ----------------- | ----- |
+| 1   |                       |                     |          |                   |       |
+| 2   |                       |                     |          |                   |       |
+| 3   |                       |                     |          |                   |       |
+| 4   |                       |                     |          |                   |       |
+| 5   |                       |                     |          |                   |       |
+| 6   |                       |                     |          |                   |       |
+| 7   |                       |                     |          | none expected     |       |
+| 8   |                       |                     |          | none expected     |       |
+| 9   |                       |                     | n/a      | n/a               |       |
+| 10  |                       |                     | n/a      | n/a               |       |
+| 11  |                       |                     | n/a      | n/a               |       |
+
+Date run: \_\_\_\_. Model: Claude Haiku 4.5. Anthropic Console usage for the run (input tokens, output tokens, cost): \_\_\_\_.

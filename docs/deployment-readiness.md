@@ -15,7 +15,11 @@ No account ID, credential, email address, hosted zone id, secret value, or deplo
 - Build: run `pnpm build:site` immediately before deploying. The app refuses a missing or development build, the fixture, the career index, and any inline script or style whose hash is not pinned in the CSP.
 - Prepared assets: run `pnpm prepare:web-adapter` on your machine before diff or deploy (CI only ever has a stub layer). The deploy scripts also run `pnpm prepare:api` and the adapter fetch, and the site app refuses any adapter binary that does not match the pinned SHA-256.
 
-## Before the first deploy with the assistant stack
+## Deployed state (Round 4, October 2026)
+
+Both stacks are deployed and the assistant is live. Verified: streamed answers through CloudFront with signed `POST`s, `403` on a direct `POST` to the function URL, and the kill switch at the account concurrency limit of 10 (reserved concurrency 0 accepted; `delete-function-concurrency` restored it). The first live request failed with `AuthenticationError` because the wrong value was saved to the secret; key rotation is now [runbook step 7](design/production-assistant.md#7-rotate-the-anthropic-api-key). The Anthropic key expires around October 2027. Still to check in Round 5: the WAF 429, CSP in the browser console, and phone use.
+
+## Before the first deploy with the assistant stack (done)
 
 - Anthropic: a dedicated workspace with a $10 monthly spend limit and a key in that workspace.
 - AWS Budget: $15 a month with email alerts, created by hand (not in the stack).

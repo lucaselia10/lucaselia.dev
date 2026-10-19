@@ -2,7 +2,7 @@
 
 This document describes the career portfolio as it exists in the repository today. It is the current integrated picture. Architectural choices stay in the [ADR index](adr/README.md). Planned work stays in the [roadmap](roadmap.md). How the design got here is in [design history](design-history.md).
 
-The static site is live at `https://lucaselia.dev` on S3 and CloudFront, without the assistant ([ADR-007](adr/007-static-site-hosting.md)). The production assistant ([ADR-009](adr/009-production-assistant.md), Proposed) is built and synthesized but not deployed: a streaming Lambda function URL behind the same CloudFront distribution at `/api/*`. The production build (`pnpm build:site`) includes the assistant, which posts to `/api/ask`; the next deploy turns it on.
+The site is live at `https://lucaselia.dev` on S3 and CloudFront ([ADR-007](adr/007-static-site-hosting.md)). The production assistant ([ADR-009](adr/009-production-assistant.md), Accepted) is live: a streaming Lambda function URL behind the same CloudFront distribution at `/api/*`. The production build (`pnpm build:site`) includes the assistant, which posts to `/api/ask`.
 
 ## Purpose and audience
 
@@ -56,7 +56,7 @@ flowchart LR
   app -->|streaming Messages| anthropic
 ```
 
-Only the visitor-to-site path is deployed. Locally, `pnpm dev:api` serves the exact-answer JSON handler on `127.0.0.1:8787`, `pnpm dev:api:model` streams model answers through the same answer code the production app uses, and `pnpm dev:api:prod` runs the production app itself on `127.0.0.1:8080` with the fixture provider.
+Both the site and the ask path are deployed. Locally, `pnpm dev:api` serves the exact-answer JSON handler on `127.0.0.1:8787`, `pnpm dev:api:model` streams model answers through the same answer code the production app uses, and `pnpm dev:api:prod` runs the production app itself on `127.0.0.1:8080` with the fixture provider.
 
 ## Build-time content flow
 
@@ -113,8 +113,9 @@ The local exact-answer handler (`ask_api.handler`, the development server's defa
 
 ## Current deployment state
 
-- `PortfolioSiteStack` is deployed by the owner and live at `https://lucaselia.dev` (without the `/api/*` behavior and WAF, which are synthesized only).
-- `PortfolioAssistantStack` has not been deployed.
+- Both stacks are deployed by the owner (Round 4, October 2026), and the assistant is live at `https://lucaselia.dev`.
+- Verified live: streamed answers through CloudFront, the OAC lock (a direct `POST` to the function URL returns `403`), and the kill switch. Cold start is about 4 seconds of init; see [cold start](design/production-assistant.md#cold-start).
+- The production evaluation (Round 5) is next.
 - The public repository's CI verifies every push and synthesizes both stacks.
 
 ## Important tradeoffs

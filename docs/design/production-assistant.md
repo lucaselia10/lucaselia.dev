@@ -284,26 +284,56 @@ Each round is reviewed before the next starts. Rounds 1 to 3 make no AWS calls a
     - No CSP violations, and axe with an answer shown.
 - **Why the preview server streams.** Playwright's `route.fulfill` sends a whole body at once, and Chromium will not continue an intercepted request to another origin. So the production preview (`apps/web/e2e/preview-server.ts`) serves the build the way CloudFront does and answers `/api/ask` with a scripted stream with delays. Error states use route interception.
 
-### Round 4: deployment and smoke test (user-run)
+### Round 4: deployment and smoke test (user-run), done
 
-- **Scope.** Claude prepares the exact commands and a checklist. The owner runs every step.
-- **Acceptance.**
-  - The function URL called directly is refused.
-  - `/api/ask` streams progressively through CloudFront: deltas arrive over time, observed with a streaming client and in the browser.
-  - Exceeding the WAF limit (21 requests in 10 minutes from one IP) gives the JSON 429.
-  - The kill switch drill (reserved concurrency 0, then restored) shows the busy message, then recovers.
-  - CSP shows no violations in the browser console.
-  - The cold-start init duration and first-byte time are recorded.
-- **Tests.** The smoke checklist, recorded in the handoff without question text.
+- **Deployed** by the owner: both stacks, after the origin request policy fix described in the [runbook](#runbook) and ADR-009.
+- **Results.**
+  - Signed `POST /api/ask` through CloudFront streams answers; streaming confirmed by eye (gradual rendering).
+  - A direct `POST` to the function URL returns `403` (the OAC lock).
+  - The kill switch (reserved concurrency 0) was accepted at the account limit of 10, and `delete-function-concurrency` restored it.
+  - The first live request failed with `AuthenticationError` (a wrong secret value); fixed by rotating the key (runbook step 7).
+  - Cold start: about 4 seconds of init; the adapter logged "app is not ready" at 2,000 ms and 4,000 ms. See [Cold start](#cold-start).
+- **Moved to Round 5:** the WAF 429 check, the CSP console check, and mobile.
 
 ### Round 5: production evaluation (user-run)
 
-- **Scope.** The seven questions from the [live local evaluation](../../tests/evaluation/README.md#live-local-evaluation), asked on the live site on desktop and mobile: current role, production reliability, the tools follow-up, degree, AWS start date, an unsupported question, and Lumen Harbor.
-- **Acceptance.**
-  - The same outcomes as the local recheck: grounded answers with citations, the partial-support follow-up, the plain "no", and the fixed refusal for the unsupported and Lumen Harbor questions.
-  - Text streams progressively, and the `SOURCES:` line never shows.
-  - No token or cost line appears.
-- **Records.** Outcomes go in `tests/evaluation/README.md` without question text. Token counts and cost come from the Anthropic Console usage page, not the UI. Then ADR-009 becomes Accepted and the Slice 2 gate closes.
+- **Checklist and results table:** [tests/evaluation/README.md](../../tests/evaluation/README.md#production-evaluation-round-5), run by the owner on the live site, on desktop and a phone.
+- **Acceptance.** Every item passes: grounded answers with working citations, the partial-support follow-up, the plain "no", the fixed refusal for favorite food and Lumen Harbor, the 500-character cap, the WAF 429 message, streaming, no token or cost lines, the privacy note, and no CSP violations.
+- **Records.** Outcomes in that table, without saving answers beyond what the table asks for. Token use comes from the Anthropic Console usage page. Then Slice 2 closes.
+
+## Cold start
+
+Round 4 measured about 4 seconds of init. Everything the app does before it listens counts, because the Lambda Web Adapter waits for the readiness check: `main()` loads the evidence, then `warm()` reads the secret through boto3 and builds the Anthropic client, and only then listens.
+
+Local measurement (October 18, 2026, Apple silicon, Python 3.13; no network, so the secret round trip is excluded):
+
+| Phase                                  | With a bytecode cache | Without one (as in Lambda) |
+| -------------------------------------- | --------------------- | -------------------------- |
+| Import `ask_api.production_app`        | 44 ms                 | 180–217 ms                 |
+| Load the evidence package (8 sections) | 4 ms                  | 4–17 ms                    |
+| Import boto3 and botocore              | 87 ms                 | 345–399 ms                 |
+| Create the Secrets Manager client      | 66 ms                 | 51–79 ms                   |
+| Import the Anthropic SDK               | 518 ms                | 946–1,275 ms               |
+| Construct the Anthropic client         | 17 ms                 | 57–64 ms                   |
+| **Total before listening**             | **737 ms**            | **1,599–2,053 ms**         |
+
+What this shows:
+
+- **The Anthropic SDK import dominates.** About 1.2 s of it without a cache, mostly `anthropic.types` and `anthropic._models` (pydantic models), plus modules the app never uses that the package's `__init__` imports anyway (Vertex clients, beta resources, the fallback middleware).
+- **The asset ships no bytecode.** Staging removes every `.pyc`, and `/var/task` is read-only, so each cold start compiles 2,569 source files' worth of imports from scratch. That roughly doubles import time locally.
+- **The function has little CPU.** Lambda allocates CPU in proportion to memory; 1,769 MB is one vCPU ([memory and CPU](https://docs.aws.amazon.com/lambda/latest/dg/configuration-memory.html)), so 256 MB is about a seventh of one. CPU-bound imports run correspondingly slower than on a laptop. How much CPU the init phase gets in practice is not documented, so the Lambda numbers below are estimates.
+- **The secret read** adds one in-region network round trip (typically tens to a few hundred milliseconds; not measured).
+
+Proposed fixes, not made yet (estimated savings against the measured 4 s):
+
+| Fix                                                              | Change                                                                                                             | Estimated saving                                                                                                                                                              | Cost or risk                                                                                                                                                                                                 |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1. Ship precompiled bytecode                                     | Staging runs `compileall` with Python 3.13 (`--invalidation-mode unchecked-hash`) instead of deleting `.pyc` files | About half of import time: roughly 1.5–2 s                                                                                                                                    | Larger asset (bytecode beside source). Must be built with the runtime's minor version, 3.13, which `uv` already provides.                                                                                    |
+| 2. Raise memory to 512 or 1,024 MB                               | `memorySize` in `PortfolioAssistantStack`                                                                          | CPU-bound init scales with CPU: roughly half the remaining time at 512 MB, three-quarters at 1,024 MB                                                                         | Duration costs 2× or 4× per second. At portfolio traffic it stays inside the free tier; the theoretical saturation worst case in the cost model scales the same way, and the $15 budget alarm still applies. |
+| 3. Listen first, warm in the background                          | Start the server, then read the secret and build the client on a background thread; the first request waits for it | Readiness passes in well under a second. The first answer still waits for the warm-up, but the secret round trip overlaps the SDK import (saves its latency, about 0.1–0.3 s) | More code: a lock and a test that a request during warm-up waits rather than failing.                                                                                                                        |
+| 4. Keep the function warm (provisioned concurrency or SnapStart) | Infrastructure                                                                                                     | Removes most cold starts                                                                                                                                                      | Ongoing cost or snapshot complexity. Not worth it at portfolio traffic.                                                                                                                                      |
+
+Recommendation: 1 and 2 (512 MB) first, measured with the init duration in the function's `REPORT` log line. Add 3 only if the first answer is still slow. Expected result: init around 1–1.5 s.
 
 ## Runbook
 
@@ -335,7 +365,7 @@ pnpm prepare:web-adapter
 
 This downloads the pinned adapter anonymously from public ECR and verifies the manifest digest, the layer digests, and the binary's SHA-256. It retries HTTP 429, 5xx, and network errors with exponential backoff, honoring `Retry-After`, and writes nothing unless every pin matches. CI never runs it: CI synthesizes with a stub layer (`pnpm prepare:web-adapter --stub`) and `-c webAdapterStub=allow`. Without that context, the site app refuses any layer whose binary is not the pinned release, so `diff:site` and `deploy:site` (which also run the fetch first, using the cached copy) stop with "Run pnpm prepare:web-adapter before diff or deploy" if only the stub is present.
 
-**Round 4 finding (October 2026).** The first `deploy:site` created `PortfolioAssistantStack`, then `PortfolioSiteStack` failed with "The parameter Headers contains x-amz-content-sha256 that is not allowed" and rolled back cleanly. The origin request policy now forwards only `Content-Type` and `Accept`; the browser still sends the hash header. Re-run steps 2 to 4. After deploying, the smoke test must include a real `POST /api/ask` from the site: an answer that streams proves CloudFront's signed request was accepted. If the function URL answers `403` with a signature error instead, use the kill switch and report it.
+**Round 4 finding (October 2026).** The first `deploy:site` created `PortfolioAssistantStack`, then `PortfolioSiteStack` failed with "The parameter Headers contains x-amz-content-sha256 that is not allowed" and rolled back cleanly. The origin request policy now forwards only `Content-Type` and `Accept`; the browser still sends the hash header, and signed `POST`s work without it in the policy (confirmed live).
 
 ### 3. Review the change
 
@@ -364,7 +394,7 @@ aws lambda put-function-concurrency --region us-east-1 --profile <deploy profile
   --function-name <AskFunctionName> --reserved-concurrent-executions 0
 ```
 
-Reserved concurrency 0 stops every invocation until it is removed ([reserved concurrency](https://docs.aws.amazon.com/lambda/latest/dg/configuration-concurrency.html)); `/api/ask` then fails while the site keeps working. The API accepts 0 as its minimum value, but the documentation does not say whether the 100-unreserved rule refuses it on an account whose limit is 10 ([PutFunctionConcurrency](https://docs.aws.amazon.com/lambda/latest/api/API_PutFunctionConcurrency.html)). If it is refused (`InvalidParameterValueException`), use the fallback: disable the API key in the Anthropic Console (the app then answers 503 `unavailable` and calls nothing billable), or add a WAF rule in the console that blocks URI paths starting with `/api/` (the stack shows drift until the next deploy). Undo the kill switch with:
+Reserved concurrency 0 stops every invocation until it is removed ([reserved concurrency](https://docs.aws.amazon.com/lambda/latest/dg/configuration-concurrency.html)); `/api/ask` then fails while the site keeps working. Verified in Round 4: it was accepted at the account concurrency limit of 10, and the undo below restored the function. If it is ever refused, the fallback is to disable the API key in the Anthropic Console (the app then answers 503 `unavailable` and calls nothing billable), or to add a WAF rule in the console that blocks URI paths starting with `/api/` (the stack shows drift until the next deploy).
 
 ```bash
 aws lambda delete-function-concurrency --region us-east-1 --profile <deploy profile> \
@@ -374,6 +404,38 @@ aws lambda delete-function-concurrency --region us-east-1 --profile <deploy prof
 ### 6. Undo a deploy
 
 Redeploy an earlier commit with step 4. To remove the assistant entirely, revert to a commit before Round 2 and deploy, or run `pnpm run destroy:site` (this removes the site too). The secret is not managed by the stack and stays until `aws secretsmanager delete-secret` is run.
+
+### 7. Rotate the Anthropic API key
+
+Do this before the key expires (it was created in October 2026 with about a year's life, so around October 2027; the exact date is in the Anthropic Console), or at once if it may have leaked.
+
+1. In the Anthropic Console, in the portfolio's workspace, create a new key. Keep the old one for now.
+2. Store it without echoing it, as in step 1:
+
+   ```bash
+   umask 077
+   read -rs ANTHROPIC_KEY_INPUT
+   printf '%s' "$ANTHROPIC_KEY_INPUT" > "$TMPDIR/anthropic-key"
+   unset ANTHROPIC_KEY_INPUT
+   aws secretsmanager put-secret-value --region us-east-1 --profile <deploy profile> \
+     --secret-id career-portfolio/anthropic-api-key \
+     --secret-string "file://$TMPDIR/anthropic-key" --query Name --output text
+   rm -P "$TMPDIR/anthropic-key"
+   ```
+
+3. Force new execution environments. A warm environment reads the key once, at cold start, and keeps it in memory until Lambda recycles it, so without this step requests keep using the old key. Any configuration update does it; the description is the least intrusive:
+
+   ```bash
+   aws lambda update-function-configuration --region us-east-1 --profile <deploy profile> \
+     --function-name <AskFunctionName> --description "key rotated $(date +%Y-%m-%d)"
+   ```
+
+   The description differs from the stack's until the next `deploy:site`, which restores it.
+
+4. Ask one question on the site. It should stream an answer; the function's log line should read `outcome=done status=200`. An `AuthenticationError` in a `setup_error` line, or the "temporarily unavailable" message on the site, means the secret holds the wrong value: repeat steps 2 and 3.
+5. Disable the old key in the Anthropic Console, then ask one more question to confirm.
+
+Round 4 needed this procedure on day one: the first value saved to the secret was wrong, and the first live request failed with `AuthenticationError` until a new key was stored and the environments were recycled.
 
 ## User-run steps, in order
 

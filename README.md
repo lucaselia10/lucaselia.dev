@@ -14,12 +14,12 @@ This is the source for my career portfolio. The site is a static record of my ro
 
 ## Status
 
-| Part                 | State                                                                                                                                                               |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Static site          | Live at [lucaselia.dev](https://lucaselia.dev), without the assistant until the next deploy.                                                                        |
-| Assistant            | Runs locally. A live local evaluation on Claude Haiku 4.5 has been run and recorded.                                                                                |
-| Production assistant | Built and synthesized, not deployed: a streaming Lambda function URL behind CloudFront `/api/*` with OAC and WAF ([ADR-009](docs/adr/009-production-assistant.md)). |
-| CI                   | GitHub Actions runs format, lint, type, test, content, build, synth, and public-safety checks. It never deploys.                                                    |
+| Part                 | State                                                                                                                                                                               |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Static site          | Live at [lucaselia.dev](https://lucaselia.dev).                                                                                                                                     |
+| Assistant            | Runs on the live site and locally. Live local evaluations on Claude Haiku 4.5 are recorded.                                                                                         |
+| Production assistant | Live on the site: a streaming Lambda function URL behind CloudFront `/api/*` with OAC and WAF ([ADR-009](docs/adr/009-production-assistant.md)). The production evaluation is next. |
+| CI                   | GitHub Actions runs format, lint, type, test, content, build, synth, and public-safety checks. It never deploys.                                                                    |
 
 The plan is in the [roadmap](docs/roadmap.md).
 

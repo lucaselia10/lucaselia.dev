@@ -1,6 +1,6 @@
 # ADR-009: Serve the production assistant from a streaming Lambda behind the site's CloudFront
 
-**Status:** Proposed. The owner locked the transport, region, stacks, server, limits, and budgets on October 17, 2026, and WAF on October 18, 2026. Rounds 1 and 2 (the app and the infrastructure) are built and synthesized. The record becomes Accepted after deployment.  
+**Status:** Accepted (October 2026). Deployed by the owner in Round 4: the assistant is live on `https://lucaselia.dev`. Decisions were locked on October 17, 2026, and WAF on October 18, 2026.  
 **Date:** October 17, 2026
 
 The specification, limits, failure modes, cost model, implementation rounds, and user-run steps are in [production assistant](../design/production-assistant.md).
@@ -154,15 +154,24 @@ Synthesized only; nothing is deployed.
 - **Asset layout fix.** Staging used to copy the `ask_api` modules to the asset root, where `import ask_api` would fail. The asset is now the task root: `ask_api/`, its dependencies, and `run.sh`. Without boto3 it shrank from 51 MB to 23 MB.
 - **Removed:** `CareerPortfolioStack`, its HTTP API, Knowledge Base, S3 Vectors, and source bucket, `bin/app.ts`, the retrieval publisher, and the Bedrock retrieval and grounding modules. The Bedrock model provider stays.
 
-## Round 4 deploy finding
+## Round 4 results (deployed)
 
-The first deploy (owner-run) created `PortfolioAssistantStack`. `PortfolioSiteStack` failed and rolled back cleanly, leaving the live site unchanged:
+Both stacks are deployed by the owner, and the assistant is live on `https://lucaselia.dev`.
 
-> AWS::CloudFront::OriginRequestPolicy: The parameter Headers contains x-amz-content-sha256 that is not allowed. (CloudFront, 400)
+- **Origin request policy.** The first site deploy failed and rolled back cleanly:
 
-- **Fix.** The `/api/*` origin request policy now lists only `Content-Type` and `Accept`, and a synth test asserts `x-amz-content-sha256` is never listed. The browser still computes and sends the header, because the OAC guide requires callers to send it to CloudFront.
-- **Documentation.** The OAC guide for function URLs and CloudFront's request header reference are silent on how the viewer's `x-amz-content-sha256` is used when CloudFront signs, and neither lists it as disallowed in a policy. The deploy error is the only evidence for the second point. The smoke test is the check for the first: a browser `POST /api/ask` that streams an answer proves the signed request was accepted. A `403` with a signature error from the function URL would mean the hash is not reaching the signature, and needs a follow-up.
-- **CDK warning.** The deploy also warned that no cross-stack reference strength was configured. `cdk.json` now sets `@aws-cdk/core:defaultCrossStackReferences` to `"strong"`, CDK's existing default; synthesized templates are byte-identical with and without it, so nothing already deployed changes.
+  > AWS::CloudFront::OriginRequestPolicy: The parameter Headers contains x-amz-content-sha256 that is not allowed. (CloudFront, 400)
+
+  The `/api/*` policy now forwards only `Content-Type` and `Accept`, and a synth test keeps `x-amz-content-sha256` out of it. The browser still sends the header. With it absent from the policy, signed `POST`s work: answers stream through CloudFront, confirmed live. The OAC guide for function URLs does not describe how CloudFront uses the viewer's header when signing; the live result is the evidence.
+
+- **OAC lock.** A direct `POST` to the function URL returns `403`.
+- **Kill switch.** `put-function-concurrency` with 0 was accepted at the account concurrency limit of 10, and `delete-function-concurrency` restored the function. The open question from Round 2 is answered.
+- **Key rotation, learned the hard way.** The first live request failed with `AuthenticationError`: the wrong value had been saved to the secret. The fix was a new key, `put-secret-value`, and a configuration update to force new execution environments, because warm environments keep the key they read at cold start. The procedure is in the [runbook](../design/production-assistant.md#7-rotate-the-anthropic-api-key).
+- **Cold start.** About 4 seconds of init. The adapter logged that the app was not ready after 2,000 ms and 4,000 ms before it listened. The causes and proposed fixes are in the [specification](../design/production-assistant.md#cold-start); nothing has been changed yet.
+- **Streaming** was confirmed by eye: answers render gradually.
+- **Runtime boto3 and `run.sh`** both work in the real runtime (the function reads its secret and serves requests).
+- **Key expiry.** The Anthropic key expires in about a year (around October 2027). Rotate it before then.
+- **CDK warning.** `cdk.json` sets `@aws-cdk/core:defaultCrossStackReferences` to `"strong"`, CDK's existing default; templates are byte-identical with and without it.
 
 ## What this changes in earlier records
 
@@ -188,11 +197,7 @@ Those records keep their text and receive status notes in the implementation rou
 
 ## Not verified, or open
 
-- Cold-start time with the adapter, and that CloudFront delivers NDJSON chunks progressively in this exact configuration. Both are Round 4 smoke-test gates.
-- How CloudFront uses the viewer's `x-amz-content-sha256` when it signs the origin request. The [OAC guide for function URLs](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-lambda.html) says only that `PUT` and `POST` callers must send it to CloudFront, and that Lambda does not support unsigned payloads; CloudFront's [request header reference](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html#request-custom-headers-behavior) does not list the header, and neither page says it is forwarded or used for SigV4. The origin request policy cannot carry it (Round 4). The smoke test verifies that a signed `POST /api/ask` from the browser reaches the function.
-- Whether reserved concurrency 0, the kill switch, is accepted at an account concurrency limit of 10. Round 2 checked the documentation and could not confirm it either way: `PutFunctionConcurrency` accepts a minimum value of 0, and the rule is to leave at least 100 executions unreserved ([PutFunctionConcurrency](https://docs.aws.amazon.com/lambda/latest/api/API_PutFunctionConcurrency.html), [concurrency quotas](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html#concurrency-quotas)). Setting 0 reserves nothing, so it should not shrink the unreserved pool, but no page covers an account whose total limit is below 100. The runbook has a fallback that does not depend on it.
+- Resolved in Round 4: progressive streaming through CloudFront, the kill switch at a concurrency limit of 10, the runtime's boto3, `run.sh` under the adapter, and signed `POST`s without `x-amz-content-sha256` in the policy (see Round 4 results). Cold start is measured (about 4 s); reducing it is open.
 - Whether the flat-rate Free plan accepts the distribution's custom response headers policy.
 - The Lambda ARM price per GB-second used in the cost model ($0.0000133334) comes from secondary sources. AWS's own pricing page did not render the table.
-- That the Python 3.13 runtime's boto3 works with the function. AWS documents that the Python runtimes include the SDK for Python and that the version depends on the runtime and Region ([Python runtimes](https://docs.aws.amazon.com/lambda/latest/dg/lambda-python.html#python-sdk-included)); the app makes one Secrets Manager call. Round 4 confirms it.
-- That `run.sh` starts the app under the adapter's bootstrap in the real runtime (`PYTHONPATH`, `python3` on the path). It follows the adapter's own layer script, but it has not run in Lambda. Round 4 confirms it.
 - Haiku 4.5's minimum cacheable prompt is 4,096 tokens, and the live evaluation averaged about 2,800 input tokens per question, so prompt caching would not apply. It is not proposed.
