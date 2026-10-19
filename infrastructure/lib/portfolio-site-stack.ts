@@ -27,8 +27,16 @@ export const PAGE_CACHE_CONTROL = "public, max-age=0, s-maxage=300, must-revalid
 
 /** The ask API path. CloudFront routes it to the function URL; everything else is the site. */
 export const API_PATH_PATTERN = "/api/*";
-/** Only what the app reads and what OAC signs. No cookies, no query strings. */
-export const API_FORWARDED_HEADERS = ["Content-Type", "Accept", "x-amz-content-sha256"] as const;
+/**
+ * Only what the app reads. No cookies, no query strings. The browser's x-amz-content-sha256
+ * (the body hash OAC needs for a POST to a function URL) is not listed: CloudFront rejects it
+ * in an origin request policy ("The parameter Headers contains x-amz-content-sha256 that is
+ * not allowed", the October 2026 deploy). How CloudFront uses the viewer's header when it signs
+ * is not documented; the Round 4 smoke test verifies that signed POSTs reach the function.
+ */
+export const API_FORWARDED_HEADERS = ["Content-Type", "Accept"] as const;
+/** CloudFront refuses this header in an origin request policy; never add it back. */
+export const API_UNFORWARDABLE_HEADERS = ["x-amz-content-sha256"] as const;
 /** Covers the first byte (cold start plus model) and every gap between streamed chunks. */
 export const API_READ_TIMEOUT_SECONDS = 40;
 /** WAF: per IP, 20 requests in a 10-minute window, on /api/ only (ADR-009). */
@@ -133,7 +141,7 @@ export class PortfolioSiteStack extends cdk.Stack {
     // The ask API: never cached, POST allowed, only the headers the app and OAC need, and no
     // viewer-request function (that one rewrites page paths).
     const apiRequests = new cloudfront.OriginRequestPolicy(this, "ApiRequests", {
-      comment: "lucaselia.dev ask API: content type, accept, and the OAC body hash only",
+      comment: "lucaselia.dev ask API: content type and accept only",
       headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(...API_FORWARDED_HEADERS),
       cookieBehavior: cloudfront.OriginRequestCookieBehavior.none(),
       queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.none(),

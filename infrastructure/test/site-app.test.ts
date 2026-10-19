@@ -185,4 +185,15 @@ describe("site CDK app", () => {
       expect(scripts[name], name).not.toContain("--stub");
     }
   });
+
+  it("pins cross-stack references to strong, the behavior already deployed", () => {
+    // cdk.json is what the CLI reads for deploy, diff, and synth. "strong" is CDK's default;
+    // setting it explicitly only silences the default-strength warning (same templates).
+    const cdkJson = JSON.parse(
+      readFileSync(join(import.meta.dirname, "..", "cdk.json"), "utf8"),
+    ) as {
+      context?: Record<string, unknown>;
+    };
+    expect(cdkJson.context?.["@aws-cdk/core:defaultCrossStackReferences"]).toBe("strong");
+  });
 });

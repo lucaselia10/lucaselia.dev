@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { PortfolioAssistantStack } from "../lib/portfolio-assistant-stack";
 import {
   API_RATE_LIMITED_BODY,
+  API_UNFORWARDABLE_HEADERS,
   ASSET_CACHE_CONTROL,
   PAGE_CACHE_CONTROL,
   PortfolioSiteStack,
@@ -328,13 +329,13 @@ describe("PortfolioSiteStack /api/*", () => {
     });
   });
 
-  it("forwards only Content-Type, Accept, and the body hash: no cookies or query strings", () => {
+  it("forwards only Content-Type and Accept: no body-hash header, cookies, or query strings", () => {
     template.resourceCountIs("AWS::CloudFront::OriginRequestPolicy", 1);
     template.hasResourceProperties("AWS::CloudFront::OriginRequestPolicy", {
       OriginRequestPolicyConfig: Match.objectLike({
         HeadersConfig: {
           HeaderBehavior: "whitelist",
-          Headers: ["Content-Type", "Accept", "x-amz-content-sha256"],
+          Headers: ["Content-Type", "Accept"],
         },
         CookiesConfig: { CookieBehavior: "none" },
         QueryStringsConfig: { QueryStringBehavior: "none" },
@@ -342,6 +343,12 @@ describe("PortfolioSiteStack /api/*", () => {
     });
     const policyId = Object.keys(template.findResources("AWS::CloudFront::OriginRequestPolicy"))[0];
     expect(api().OriginRequestPolicyId).toEqual({ Ref: policyId });
+    // CloudFront rejects x-amz-content-sha256 in an origin request policy (HTTP 400 on the
+    // October 2026 deploy), so it must never be listed. The browser still sends it for OAC.
+    const policy = JSON.stringify(template.findResources("AWS::CloudFront::OriginRequestPolicy"));
+    for (const header of API_UNFORWARDABLE_HEADERS) {
+      expect(policy.toLowerCase()).not.toContain(header);
+    }
   });
 
   it("lets CloudFront invoke the function only on behalf of this distribution", () => {

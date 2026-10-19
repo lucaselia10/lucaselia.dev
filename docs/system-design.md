@@ -76,7 +76,7 @@ The current public corpus is the profile, five experience documents, two educati
 The production contract is in [production assistant](design/production-assistant.md#ndjson-contract). In short:
 
 1. The browser posts `{ question, mode: "career_question", history }` to `/api/ask` with `Accept: application/x-ndjson` and the body's SHA-256 in `x-amz-content-sha256` (OAC requires it for `POST` to a function URL).
-2. WAF counts the request per IP. CloudFront signs it with SigV4 and forwards only `Content-Type`, `Accept`, and `x-amz-content-sha256`.
+2. WAF counts the request per IP. CloudFront signs it with SigV4 and forwards only `Content-Type` and `Accept` through the origin request policy (CloudFront does not allow `x-amz-content-sha256` there).
 3. The production app validates the body (question up to 500 characters, body up to 16 KB), checks its pause flag, and streams the answer: `delta` events as the model writes, then `done` with citations matched to the evidence package, or `error`.
 4. Statuses are 200, 400, 413, 429, and 503 only. A spend-limit or overload error pauses that environment for 5 minutes. Responses never carry token counts or cost.
 

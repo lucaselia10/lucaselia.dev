@@ -70,7 +70,7 @@ sequenceDiagram
 ```
 
 1. **Body and hash.** The island serializes the body once, encodes it as UTF-8, and hashes those bytes with `crypto.subtle.digest("SHA-256", …)`. It sends the same bytes with `x-amz-content-sha256: <lowercase hex>`. OAC requires the hash for `POST` to a function URL ([OAC for function URLs](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-lambda.html)). The request is same-origin, so no preflight runs, and `credentials: "omit"` stays.
-2. **Edge checks.** WAF counts the request against the per-IP rule. CloudFront signs it with SigV4 for the function URL and forwards only `Content-Type`, `Accept`, and `x-amz-content-sha256`.
+2. **Edge checks.** WAF counts the request against the per-IP rule. CloudFront signs it with SigV4 for the function URL and forwards only `Content-Type` and `Accept` through the origin request policy. CloudFront does not allow `x-amz-content-sha256` in that policy; how it uses the viewer's header when signing is undocumented and is verified by the smoke test (ADR-009, Round 4 deploy finding).
 3. **Function checks.** The function validates the body, applies the limits below, and checks the in-memory paused flag before calling the model.
 4. **Streaming.** The answer stream is the local one, with the same deltas, holdback, deadline, and completion. Each event is written and flushed as one NDJSON line.
 5. **Outcome logging.** The function logs one line per request: `ask request=… outcome=… status=… input_tokens=… output_tokens=… latency_ms=…`. Nothing else is logged.
@@ -335,6 +335,8 @@ pnpm prepare:web-adapter
 
 This downloads the pinned adapter anonymously from public ECR and verifies the manifest digest, the layer digests, and the binary's SHA-256. It retries HTTP 429, 5xx, and network errors with exponential backoff, honoring `Retry-After`, and writes nothing unless every pin matches. CI never runs it: CI synthesizes with a stub layer (`pnpm prepare:web-adapter --stub`) and `-c webAdapterStub=allow`. Without that context, the site app refuses any layer whose binary is not the pinned release, so `diff:site` and `deploy:site` (which also run the fetch first, using the cached copy) stop with "Run pnpm prepare:web-adapter before diff or deploy" if only the stub is present.
 
+**Round 4 finding (October 2026).** The first `deploy:site` created `PortfolioAssistantStack`, then `PortfolioSiteStack` failed with "The parameter Headers contains x-amz-content-sha256 that is not allowed" and rolled back cleanly. The origin request policy now forwards only `Content-Type` and `Accept`; the browser still sends the hash header. Re-run steps 2 to 4. After deploying, the smoke test must include a real `POST /api/ask` from the site: an answer that streams proves CloudFront's signed request was accepted. If the function URL answers `403` with a signature error instead, use the kill switch and report it.
+
 ### 3. Review the change
 
 ```bash
@@ -343,7 +345,7 @@ pnpm build:site
 SITE_HOSTED_ZONE_ID=<zone id> AWS_PROFILE=<deploy profile> pnpm run diff:site
 ```
 
-The diff covers both stacks. Expect a new `PortfolioAssistantStack` and, in `PortfolioSiteStack`, the `/api/*` behavior, a second OAC, an origin request policy, two Lambda permissions, and the WAF web ACL. Page behaviors and headers should not change.
+The diff covers both stacks. `PortfolioAssistantStack` already exists (deployed in Round 4) and should show no changes. In `PortfolioSiteStack`, expect the `/api/*` behavior, a second OAC, an origin request policy (`Content-Type` and `Accept` only), two Lambda permissions, and the WAF web ACL. Page behaviors and headers should not change.
 
 ### 4. Deploy
 
