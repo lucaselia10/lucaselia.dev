@@ -261,7 +261,7 @@ def test_max_tokens_and_prompt_match_local_mode() -> None:
 
     request = provider.requests[0]
     assert request.max_tokens == 500
-    assert request.system.startswith("Prompt version: local-3")
+    assert request.system.startswith("Prompt version: local-4")
 
 
 def test_setup_failure_is_503_and_logs_only_the_class_name() -> None:

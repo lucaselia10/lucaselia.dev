@@ -1132,7 +1132,7 @@ def test_prompt_answers_partial_support_instead_of_refusing() -> None:
     assert "Cite the sections you used." in LOCAL_SYSTEM_PROMPT
     assert "Do not infer facts the evidence does not state." in LOCAL_SYSTEM_PROMPT
     assert "Refer to Lucas in the third person." in LOCAL_SYSTEM_PROMPT
-    assert "Prompt version: local-3" in LOCAL_SYSTEM_PROMPT
+    assert "Prompt version: local-4" in LOCAL_SYSTEM_PROMPT
 
 
 def test_partial_answer_with_a_stated_gap_streams_with_citations() -> None:

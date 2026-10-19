@@ -5,12 +5,13 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import {
   askApiHandlerScriptPath,
   askApiPackageDir,
@@ -92,6 +93,7 @@ export function stageLambdaAsset(
   chmodSync(handlerDestination, 0o755);
   installPinnedRuntimeDependencies(destination);
   removeInstallMetadata(destination);
+  compileBytecode(destination);
 
   for (const required of [
     ...lambdaAssetRequiredPaths.map((path) => join(lambdaPackageDirectoryName, path)),
@@ -138,6 +140,98 @@ function assertEvidencePresent(evidenceDir: string, evidenceManifest: string): v
   ) {
     throw new Error(
       "The evidence package is missing. Run pnpm build:retrieval before staging the Lambda asset.",
+    );
+  }
+}
+
+/**
+ * Precompiled bytecode for the Lambda's Python 3.13 runtime. /var/task is read-only, so without
+ * it every cold start compiles every imported module from source (ADR-009, cold start).
+ * Bytecode does not depend on the CPU architecture, only on the Python minor version, so it is
+ * built here with uv's CPython 3.13 and checked: each module gets a cpython-313 .pyc whose
+ * magic number is 3.13's, in unchecked-hash mode (never revalidated against source mtimes,
+ * which a deployment zip does not preserve meaningfully).
+ */
+export const lambdaBytecodeTag = "cpython-313";
+const UNCHECKED_HASH_FLAGS = 0b01;
+
+export function compileBytecode(destination: string): void {
+  const python = findPython313();
+  const magic = execFileSync(
+    python,
+    [
+      "-c",
+      "import importlib.util, sys; assert sys.version_info[:2] == (3, 13); print(importlib.util.MAGIC_NUMBER.hex())",
+    ],
+    { encoding: "utf8" },
+  ).trim();
+  execFileSync(
+    python,
+    [
+      "-m",
+      "compileall",
+      "-q",
+      "-j",
+      "0",
+      "--invalidation-mode",
+      "unchecked-hash",
+      // Tracebacks name the Lambda path, not this machine's.
+      "-s",
+      destination,
+      "-p",
+      "/var/task",
+      destination,
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const problems = bytecodeProblems(destination, magic);
+  if (problems.length > 0) {
+    throw new Error(`Lambda bytecode check failed:\n- ${problems.slice(0, 10).join("\n- ")}`);
+  }
+}
+
+/** Every .py has a matching cpython-313 .pyc with the expected magic and unchecked-hash flags. */
+export function bytecodeProblems(destination: string, magicHex: string): string[] {
+  const problems: string[] = [];
+  for (const path of relativeAssetPaths(destination)) {
+    if (!path.endsWith(".py")) {
+      continue;
+    }
+    const directory = dirname(path);
+    const name = basename(path, ".py");
+    const compiled = join(
+      destination,
+      directory,
+      "__pycache__",
+      `${name}.${lambdaBytecodeTag}.pyc`,
+    );
+    if (!existsSync(compiled)) {
+      problems.push(`${path} has no ${lambdaBytecodeTag} bytecode`);
+      continue;
+    }
+    const header = readFileSync(compiled).subarray(0, 8);
+    if (header.subarray(0, 4).toString("hex") !== magicHex) {
+      problems.push(
+        `${path}: bytecode magic ${header.subarray(0, 4).toString("hex")} is not ${magicHex}`,
+      );
+    }
+    if (header.readUInt32LE(4) !== UNCHECKED_HASH_FLAGS) {
+      problems.push(`${path}: bytecode is not in unchecked-hash mode`);
+    }
+  }
+  return problems;
+}
+
+function findPython313(): string {
+  try {
+    return execFileSync("uv", ["python", "find", lambdaPythonVersion], {
+      cwd: askApiProjectDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    throw new Error(
+      "Python 3.13 is required to compile the Lambda bytecode: run uv python install 3.13.",
     );
   }
 }

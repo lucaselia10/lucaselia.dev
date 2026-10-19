@@ -67,7 +67,7 @@ Options considered and rejected:
 
 The function ships the same evidence package local mode builds from `generated/retrieval/` and its manifest. The package is eight short sections, well under the 100,000-character cap. No Bedrock Knowledge Base, S3 Vectors index, source bucket, Titan embeddings, publisher, or ingestion. `assistant_retrievable: false` documents, including Lumen Harbor, stay out as they do today. A content change redeploys the function and the site together, so citations and page anchors stay in step, as [ADR-003](003-bundle-career-index-with-lambda.md) already required for the index.
 
-Production uses prompt `local-3`, which a later round renames without changing its wording, and the shared `answer_style` rules. The `SOURCES:` validation, refusal wording, and partial-support behavior are the ones evaluated live in Slice 1.
+Production uses prompt `local-3` (`local-4` since Round 5), and the shared `answer_style` rules. The `SOURCES:` validation, refusal wording, and partial-support behavior are the ones evaluated live in Slice 1.
 
 ### 3. Same origin through CloudFront, with Origin Access Control
 
@@ -148,7 +148,7 @@ The production app (`ask_api.production_app`) implements section 1 in code. Noth
 
 Synthesized only; nothing is deployed.
 
-- **`PortfolioAssistantStack`** (`us-east-1`, in the site app): the function (Python 3.13, ARM64, 256 MB, 35-second timeout, handler `run.sh`, no reserved concurrency), its function URL (`AWS_IAM`, `RESPONSE_STREAM`), the adapter layer, a 14-day log group, and environment for the adapter, the model id, and the secret name. The role can read only the named secret (`secret:<name>-??????`). The secret is referenced by name and never created.
+- **`PortfolioAssistantStack`** (`us-east-1`, in the site app): the function (Python 3.13, ARM64, 256 MB, raised to 512 MB after Round 5, 35-second timeout, handler `run.sh`, no reserved concurrency), its function URL (`AWS_IAM`, `RESPONSE_STREAM`), the adapter layer, a 14-day log group, and environment for the adapter, the model id, and the secret name. The role can read only the named secret (`secret:<name>-??????`). The secret is referenced by name and never created.
 - **Web Adapter layer.** The project publishes no binaries on GitHub releases (checked against the releases API), so `pnpm prepare:web-adapter` reads the 1.1.0 linux/arm64 image anonymously from `public.ecr.aws/awsguru/aws-lambda-adapter` over the registry API. Three pins fail it closed: the arm64 manifest digest, each layer's digest from that manifest, and the SHA-256 of the extracted `lambda-adapter` binary. The layer is that binary in `extensions/` plus a two-line `bootstrap` equivalent to the adapter's own. No layer ARN from another account is used. CI does not fetch: public ECR throttles anonymous pulls from shared runners (HTTP 429), so CI synthesizes with a stub layer and `-c webAdapterStub=allow`, and the site app refuses the stub (or any binary not matching the pinned SHA-256) for every other synth, including `diff:site` and `deploy:site`. The owner runs the fetch before deploying; it retries 429, 5xx, and network errors with exponential backoff and `Retry-After`. Unit tests use a fake registry.
 - **`PortfolioSiteStack`:** an `/api/*` behavior to the function URL with a Lambda OAC (always sign, SigV4), `CachingDisabled`, all methods, HTTPS only, no compression, no viewer-request function, a 40-second read timeout and one connection attempt, and an origin request policy forwarding only `Content-Type` and `Accept` (Round 4 removed `x-amz-content-sha256`, which CloudFront does not allow there). Two Lambda permissions for `cloudfront.amazonaws.com`, both with `aws:SourceArn` set to this distribution: `lambda:InvokeFunctionUrl` (added by CDK) and `lambda:InvokeFunction` (added here, because CloudFront's OAC guide lists both). The WAF web ACL is attached to the distribution. Page behaviors are unchanged.
 - **Asset layout fix.** Staging used to copy the `ask_api` modules to the asset root, where `import ask_api` would fail. The asset is now the task root: `ask_api/`, its dependencies, and `run.sh`. Without boto3 it shrank from 51 MB to 23 MB.
@@ -167,11 +167,27 @@ Both stacks are deployed by the owner, and the assistant is live on `https://luc
 - **OAC lock.** A direct `POST` to the function URL returns `403`.
 - **Kill switch.** `put-function-concurrency` with 0 was accepted at the account concurrency limit of 10, and `delete-function-concurrency` restored the function. The open question from Round 2 is answered.
 - **Key rotation, learned the hard way.** The first live request failed with `AuthenticationError`: the wrong value had been saved to the secret. The fix was a new key, `put-secret-value`, and a configuration update to force new execution environments, because warm environments keep the key they read at cold start. The procedure is in the [runbook](../design/production-assistant.md#7-rotate-the-anthropic-api-key).
-- **Cold start.** About 4 seconds of init. The adapter logged that the app was not ready after 2,000 ms and 4,000 ms before it listened. The causes and proposed fixes are in the [specification](../design/production-assistant.md#cold-start); nothing has been changed yet.
+- **Cold start.** About 4 seconds of init. The adapter logged that the app was not ready after 2,000 ms and 4,000 ms before it listened. The causes and proposed fixes are in the [specification](../design/production-assistant.md#cold-start). Fixes 1 and 2 were made after Round 5 (see below).
 - **Streaming** was confirmed by eye: answers render gradually.
 - **Runtime boto3 and `run.sh`** both work in the real runtime (the function reads its secret and serves requests).
 - **Key expiry.** The Anthropic key expires in about a year (around October 2027). Rotate it before then.
 - **CDK warning.** `cdk.json` sets `@aws-cdk/core:defaultCrossStackReferences` to `"strong"`, CDK's existing default; templates are byte-identical with and without it.
+
+## Round 5 results
+
+The owner ran the production evaluation on the live site on October 18, 2026, on desktop; the phone pass was not run. The [results table](../tests/evaluation/README.md#production-evaluation-round-5) records each item.
+
+- **All eleven items pass.** Grounded answers with citations, the partial-support answer (it led with the SDE II technologies and stated the gap once), the fixed refusal with no citations for favorite food and Lumen Harbor, the 500-character cap, no CSP errors, the privacy note, and the role-page box.
+- **Wording issue: a repeated negative.** The degree answer said "no degree awarded" twice, once per education page, because each page's facts say so. The fix is a sharper rule in `answer_style`, with a short example: state a negative that several pages support once, as one clause for the whole answer. The prompt version is now `local-4`. Local mode and production share this one prompt. Reviewed content is unchanged.
+- **WAF rate limit.** A 30-request burst got `400`s throughout: WAF counts requests with a delay, so a short burst can pass before the rule acts. A slower loop afterwards got `429` throughout, and the site showed "Too many questions in a short time. Please wait a few minutes."
+- **Streaming** confirmed by eye. **The first answer after idle** took about 4 seconds, the cold start measured in Round 4.
+
+Polish made after Round 5, for the owner to deploy:
+
+- Prompt `local-4` (the rule above).
+- **Precompiled bytecode.** Staging compiles the asset with CPython 3.13 in unchecked-hash mode and fails unless every module has matching bytecode.
+- **512 MB of memory**, which doubles the CPU share for CPU-bound imports. The saturation worst case in the cost model rises from about $81 to about $167 of Lambda duration a month; the $15 budget alarm and the kill switch still bound it in practice.
+- After deploying, the cold start's `Init Duration` in the `REPORT` log line is the measure (about 4,000 ms before; about 1,000–1,500 ms expected).
 
 ## What this changes in earlier records
 
@@ -197,7 +213,7 @@ Those records keep their text and receive status notes in the implementation rou
 
 ## Not verified, or open
 
-- Resolved in Round 4: progressive streaming through CloudFront, the kill switch at a concurrency limit of 10, the runtime's boto3, `run.sh` under the adapter, and signed `POST`s without `x-amz-content-sha256` in the policy (see Round 4 results). Cold start is measured (about 4 s); reducing it is open.
+- Resolved in Round 4: progressive streaming through CloudFront, the kill switch at a concurrency limit of 10, the runtime's boto3, `run.sh` under the adapter, and signed `POST`s without `x-amz-content-sha256` in the policy (see Round 4 results). Cold start is measured (about 4 s); the bytecode and 512 MB fixes made after Round 5 are not yet measured live.
 - Whether the flat-rate Free plan accepts the distribution's custom response headers policy.
 - The Lambda ARM price per GB-second used in the cost model ($0.0000133334) comes from secondary sources. AWS's own pricing page did not render the table.
 - Haiku 4.5's minimum cacheable prompt is 4,096 tokens, and the live evaluation averaged about 2,800 input tokens per question, so prompt caching would not apply. It is not proposed.

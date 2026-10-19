@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -38,5 +38,19 @@ describe("ask Lambda asset dependencies", () => {
         /^(_?pytest|pyright|ruff|boto3_stubs|botocore_stubs|mypy|nodeenv)([-_.]|$)/i.test(name),
       ),
     ).toEqual([]);
+  });
+
+  it("ships Python 3.13 bytecode for the app, so cold starts skip compiling", () => {
+    // Header: CPython 3.13's magic number, then flags 1 (hash-based, unchecked).
+    for (const module of ["production_app", "local_stream", "stream_http"]) {
+      const header = readFileSync(
+        join(assetDirectory, "ask_api", "__pycache__", `${module}.cpython-313.pyc`),
+      ).subarray(0, 8);
+      expect(header.subarray(0, 4).toString("hex"), module).toBe("f30d0d0a");
+      expect(header.readUInt32LE(4), module).toBe(1);
+    }
+    expect(
+      existsSync(join(assetDirectory, "anthropic", "__pycache__", "__init__.cpython-313.pyc")),
+    ).toBe(true);
   });
 });

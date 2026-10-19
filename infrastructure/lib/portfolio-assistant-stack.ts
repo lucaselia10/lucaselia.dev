@@ -10,7 +10,8 @@ export const ASSISTANT_STACK_NAME = "PortfolioAssistantStack";
 export const ASSISTANT_REGION = "us-east-1";
 /** Just above the app's 31-second stream deadline (ADR-009). */
 export const ASK_TIMEOUT_SECONDS = 35;
-export const ASK_MEMORY_MB = 256;
+/** 512 MB: CPU scales with memory, and init (imports) is CPU-bound (ADR-009, cold start). */
+export const ASK_MEMORY_MB = 512;
 export const ASK_LOG_RETENTION = logs.RetentionDays.TWO_WEEKS;
 export const DEFAULT_ANTHROPIC_MODEL_ID = "claude-haiku-4-5-20251001";
 /** The secret the owner creates by hand. Override with -c anthropicSecretName=… */

@@ -61,7 +61,7 @@ Re-run the tools follow-up, the degree question, and "What have you built at AWS
 
 ## Production evaluation (Round 5)
 
-Run by the owner on `https://lucaselia.dev`, on a desktop browser and a phone. The production assistant uses the same prompt (`local-3`) and evidence as local model mode, so the questions are the local ones. Ask questions 1 to 6 in one conversation, in order, so the follow-up has its context; ask 7 and 8 after a reload. Run item 11 last: it blocks your IP from the assistant for a few minutes.
+Run by the owner on `https://lucaselia.dev`, on a desktop browser and a phone. The production assistant uses the same prompt (`local-3` at this run, `local-4` after it) and evidence as local model mode, so the questions are the local ones. Ask questions 1 to 6 in one conversation, in order, so the follow-up has its context; ask 7 and 8 after a reload. Run item 11 last: it blocks your IP from the assistant for a few minutes.
 
 Every answer, on every item, must also:
 
@@ -96,20 +96,22 @@ Is item 11 worth running? Yes, this way. It is the only end-to-end proof that th
 
 ### Results
 
-Fill in one row per item, for desktop and phone. Do not paste answer text; describe the outcome.
+Run by the owner on October 18, 2026, on a desktop browser, prompt `local-3`. The phone pass was not run. Answer text is not recorded.
 
-| #   | Desktop: pass or fail | Phone: pass or fail | Streamed | Citations (pages) | Notes |
-| --- | --------------------- | ------------------- | -------- | ----------------- | ----- |
-| 1   |                       |                     |          |                   |       |
-| 2   |                       |                     |          |                   |       |
-| 3   |                       |                     |          |                   |       |
-| 4   |                       |                     |          |                   |       |
-| 5   |                       |                     |          |                   |       |
-| 6   |                       |                     |          |                   |       |
-| 7   |                       |                     |          | none expected     |       |
-| 8   |                       |                     |          | none expected     |       |
-| 9   |                       |                     | n/a      | n/a               |       |
-| 10  |                       |                     | n/a      | n/a               |       |
-| 11  |                       |                     | n/a      | n/a               |       |
+| #   | Desktop             | Phone   | Streamed | Citations (pages) | Notes                                                                                                                                                                                                                           |
+| --- | ------------------- | ------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Pass                | Not run | Yes      | SDE II            |                                                                                                                                                                                                                                 |
+| 2   | Pass                | Not run | Yes      | AWS role pages    |                                                                                                                                                                                                                                 |
+| 3   | Pass                | Not run | Yes      | SDE II            |                                                                                                                                                                                                                                 |
+| 4   | Pass                | Not run | Yes      | SDE II            | Partial answer: led with the SDE II technologies, then stated the gap once.                                                                                                                                                     |
+| 5   | Pass, wording issue | Not run | Yes      | Education pages   | "No degree awarded" appeared twice, once per education page (each page's Facts block says "Degree awarded: no"). Fixed in prompt `local-4`: one clause for a negative that several pages share. Re-check after the next deploy. |
+| 6   | Pass                | Not run | Yes      | Apprentice        |                                                                                                                                                                                                                                 |
+| 7   | Pass                | Not run | Yes      | None              | Exact fixed refusal.                                                                                                                                                                                                            |
+| 8   | Pass                | Not run | Yes      | None              | Exact fixed refusal; Lumen Harbor never presented as Lucas's work.                                                                                                                                                              |
+| 9   | Pass                | Not run | n/a      | n/a               | The field stops at 500 characters.                                                                                                                                                                                              |
+| 10  | Pass                | Not run | n/a      | n/a               | No CSP errors; privacy note shown; role-page box present.                                                                                                                                                                       |
+| 11  | Pass                | Not run | n/a      | n/a               | A 30-request burst got `400`s throughout (WAF detection lag); a slower loop then got `429` throughout, and the site showed "Too many questions in a short time. Please wait a few minutes."                                     |
 
-Date run: \_\_\_\_. Model: Claude Haiku 4.5. Anthropic Console usage for the run (input tokens, output tokens, cost): \_\_\_\_.
+Streaming was confirmed by eye on every answer. The first answer after an idle period took about 4 seconds (a cold start); the bytecode and 512 MB changes after this run target it.
+
+Date run: 2026-10-18. Model: Claude Haiku 4.5. Anthropic Console usage for the run: not recorded.

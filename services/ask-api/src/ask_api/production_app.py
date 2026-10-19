@@ -2,7 +2,7 @@
 
 The adapter forwards each function URL request to this standard-library server on
 127.0.0.1 and streams the response back. ``POST /api/ask`` answers with the same NDJSON
-events as local model mode: the local-3 prompt, the bundled evidence package, the history
+events as local model mode: the local-4 prompt, the bundled evidence package, the history
 window, SOURCES validation, the fixed refusal, and the shared answer style all come from the
 modules local mode uses. ``GET /ready`` answers the adapter's readiness check; CloudFront
 routes only ``/api/*`` here, so the public cannot reach it.

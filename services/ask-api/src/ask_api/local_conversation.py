@@ -16,7 +16,7 @@ from ask_api.answer_style import ANSWER_STYLE_RULES
 from ask_api.exact_answers import FALLBACK_ANSWER
 from ask_api.local_evidence import EvidencePackage, EvidenceSection
 
-LOCAL_PROMPT_VERSION = "local-3"
+LOCAL_PROMPT_VERSION = "local-4"
 MAX_HISTORY_EXCHANGES = 6
 MAX_HISTORY_CHARS = 12_000
 MAX_LOCAL_CITATIONS = 8

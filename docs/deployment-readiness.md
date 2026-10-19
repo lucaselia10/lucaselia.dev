@@ -17,7 +17,7 @@ No account ID, credential, email address, hosted zone id, secret value, or deplo
 
 ## Deployed state (Round 4, October 2026)
 
-Both stacks are deployed and the assistant is live. Verified: streamed answers through CloudFront with signed `POST`s, `403` on a direct `POST` to the function URL, and the kill switch at the account concurrency limit of 10 (reserved concurrency 0 accepted; `delete-function-concurrency` restored it). The first live request failed with `AuthenticationError` because the wrong value was saved to the secret; key rotation is now [runbook step 7](design/production-assistant.md#7-rotate-the-anthropic-api-key). The Anthropic key expires around October 2027. Still to check in Round 5: the WAF 429, CSP in the browser console, and phone use.
+Both stacks are deployed and the assistant is live. Verified: streamed answers through CloudFront with signed `POST`s, `403` on a direct `POST` to the function URL, and the kill switch at the account concurrency limit of 10 (reserved concurrency 0 accepted; `delete-function-concurrency` restored it). The first live request failed with `AuthenticationError` because the wrong value was saved to the secret; key rotation is now [runbook step 7](design/production-assistant.md#7-rotate-the-anthropic-api-key). The Anthropic key expires around October 2027. Round 5 (October 18, 2026, desktop) confirmed the WAF 429 and a clean CSP console; phone use was not checked. The next deploy carries prompt `local-4`, precompiled bytecode, and 512 MB of memory; after it, compare `Init Duration` in the cold-start `REPORT` log line with the earlier 4 s.
 
 ## Before the first deploy with the assistant stack (done)
 

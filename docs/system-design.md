@@ -114,8 +114,8 @@ The local exact-answer handler (`ask_api.handler`, the development server's defa
 ## Current deployment state
 
 - Both stacks are deployed by the owner (Round 4, October 2026), and the assistant is live at `https://lucaselia.dev`.
-- Verified live: streamed answers through CloudFront, the OAC lock (a direct `POST` to the function URL returns `403`), and the kill switch. Cold start is about 4 seconds of init; see [cold start](design/production-assistant.md#cold-start).
-- The production evaluation (Round 5) is next.
+- Verified live: streamed answers through CloudFront, the OAC lock (a direct `POST` to the function URL returns `403`), and the kill switch. Cold start was about 4 seconds of init; see [cold start](design/production-assistant.md#cold-start).
+- The production evaluation (Round 5) passed on desktop on October 18, 2026. After it: prompt `local-4`, precompiled bytecode, and 512 MB of memory, for the owner to deploy.
 - The public repository's CI verifies every push and synthesizes both stacks.
 
 ## Important tradeoffs
@@ -140,6 +140,6 @@ The local exact-answer handler (`ask_api.handler`, the development server's defa
 
 Evidence is the full text, including the `Facts:` block, of every assistant-retrievable section. The loader refuses the package when a section's document is not public and retrievable in the career index, when a section exceeds 20,000 characters, or when the package exceeds 100,000 characters. The last six successful exchanges are sent as context, with older whole exchanges dropped to stay within 12,000 characters. History is not evidence.
 
-Every provider gets `max_tokens` 500 and temperature 0.0 where the model accepts it. The prompt (version `local-3`) carries the shared wording rules in `ask_api/answer_style.py`. When nothing relevant is supported, or the question is off topic, the answer is the fixed sentence above with `SOURCES: none`. The model ends with a `SOURCES:` line, which is never streamed; its chunk identifiers must match the evidence package exactly.
+Every provider gets `max_tokens` 500 and temperature 0.0 where the model accepts it. The prompt (version `local-4`) carries the shared wording rules in `ask_api/answer_style.py`. When nothing relevant is supported, or the question is off topic, the answer is the fixed sentence above with `SOURCES: none`. The model ends with a `SOURCES:` line, which is never streamed; its chunk identifiers must match the evidence package exactly.
 
 Conversations stay in page memory. The application does not save transcripts or log questions.

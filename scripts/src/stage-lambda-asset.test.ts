@@ -5,11 +5,15 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { askApiPackageDir, askApiProjectDir, repoRoot } from "./paths.js";
 import {
+  bytecodeProblems,
   copyEvidencePackage,
   lambdaAssetRequiredPaths,
   relativeAssetPaths,
   stageLambdaAsset,
 } from "./stage-lambda-asset.js";
+
+/** CPython 3.13's bytecode magic number (3571), stable across 3.13 patch releases. */
+const PYTHON_313_MAGIC = "f30d0d0a";
 
 describe("Lambda asset staging", () => {
   it("copies the package and index and leaves prohibited paths behind", () => {
@@ -54,7 +58,12 @@ describe("Lambda asset staging", () => {
     expect(staged.join("\n")).not.toContain("stale_sdk");
     expect(staged).not.toContain("pytest.py");
     expect(staged).not.toContain("upload.pdf");
+    // The stale bytecode in the source tree (with no source beside it) is not copied.
+    expect(existsSync(join(destination, "ask_api", "__pycache__", "handler.cpython-313.pyc"))).toBe(
+      false,
+    );
     expectAbsentFromAsset(staged);
+    expectBytecode(staged, destination);
   });
 
   it("does not include the development server in the Lambda asset", () => {
@@ -79,6 +88,7 @@ describe("Lambda asset staging", () => {
     expectExecutableHandler(destination);
     expectPinnedRuntimeDependencies(staged);
     expectAbsentFromAsset(staged);
+    expectBytecode(staged, destination);
   });
 
   it("refuses to stage without the evidence package", () => {
@@ -153,10 +163,21 @@ function expectPinnedRuntimeDependencies(staged: string[]): void {
   }
 }
 
+/** Every module ships 3.13 bytecode, and no other bytecode does (ADR-009, cold start). */
+function expectBytecode(staged: string[], destination: string): void {
+  const sources = staged.filter((path) => path.endsWith(".py"));
+  const compiled = staged.filter((path) => path.endsWith(".pyc"));
+  expect(sources.length).toBeGreaterThan(0);
+  expect(compiled.length).toBe(sources.length);
+  for (const path of compiled) {
+    expect(path).toMatch(/(^|\/)__pycache__\/[^/]+\.cpython-313\.pyc$/);
+  }
+  expect(bytecodeProblems(destination, PYTHON_313_MAGIC)).toEqual([]);
+}
+
 function expectAbsentFromAsset(staged: string[]): void {
   const segments = staged.flatMap((path) => path.split("/"));
   for (const prohibited of [
-    "__pycache__",
     ".venv",
     ".pytest_cache",
     ".ruff_cache",
@@ -173,7 +194,6 @@ function expectAbsentFromAsset(staged: string[]): void {
   expect(
     staged.some(
       (path) =>
-        path.endsWith(".pyc") ||
         path.endsWith(".pyo") ||
         path.endsWith(".env") ||
         path.endsWith("credentials.json") ||
@@ -232,3 +252,32 @@ function writePythonFile(root: string, path: string, contents: string): void {
   mkdirSync(join(destination, ".."), { recursive: true });
   writeFileSync(destination, contents);
 }
+
+describe("Lambda bytecode check", () => {
+  it("reports missing, wrong-version, and timestamp-mode bytecode", () => {
+    const root = mkdtempSync(join(tmpdir(), "bytecode-"));
+    writePythonFile(root, "ok.py", "x = 1\n");
+    writePythonFile(root, "missing.py", "x = 1\n");
+    writePythonFile(root, "old.py", "x = 1\n");
+    writePythonFile(root, "timestamp.py", "x = 1\n");
+    const header = (magic: string, flags: number) => {
+      const bytes = Buffer.alloc(16);
+      Buffer.from(magic, "hex").copy(bytes, 0);
+      bytes.writeUInt32LE(flags, 4);
+      return bytes;
+    };
+    mkdirSync(join(root, "__pycache__"));
+    writeFileSync(join(root, "__pycache__", "ok.cpython-313.pyc"), header(PYTHON_313_MAGIC, 1));
+    writeFileSync(join(root, "__pycache__", "old.cpython-313.pyc"), header("cb0d0d0a", 1));
+    writeFileSync(
+      join(root, "__pycache__", "timestamp.cpython-313.pyc"),
+      header(PYTHON_313_MAGIC, 0),
+    );
+
+    const problems = bytecodeProblems(root, PYTHON_313_MAGIC).join("\n");
+    expect(problems).toContain("missing.py has no cpython-313 bytecode");
+    expect(problems).toContain("old.py: bytecode magic cb0d0d0a");
+    expect(problems).toContain("timestamp.py: bytecode is not in unchecked-hash mode");
+    expect(problems).not.toContain("ok.py");
+  });
+});

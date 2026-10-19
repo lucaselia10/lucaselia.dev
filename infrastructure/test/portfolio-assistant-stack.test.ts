@@ -29,7 +29,7 @@ describe("PortfolioAssistantStack", () => {
       Runtime: "python3.13",
       Architectures: ["arm64"],
       Handler: "run.sh",
-      MemorySize: 256,
+      MemorySize: 512,
       Timeout: 35,
     });
     expect((properties.Environment as { Variables: Record<string, string> }).Variables).toEqual({

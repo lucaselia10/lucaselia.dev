@@ -8,7 +8,7 @@ Nothing here is built or deployed. Prices and limits cite AWS and Anthropic docu
 
 ## Goals
 
-- The same answers as local model mode: prompt `local-3`, the full approved evidence package, bounded history, `SOURCES:` validation, the fixed refusal, and the shared `answer_style` rules.
+- The same answers as local model mode: prompt `local-4`, the full approved evidence package, bounded history, `SOURCES:` validation, the fixed refusal, and the shared `answer_style` rules.
 - Text that streams as the model writes it, on desktop and mobile.
 - One origin (`lucaselia.dev`), no CORS, and an API that can only be reached through CloudFront.
 - Bounded cost: a $10 monthly model cap, a small AWS baseline, and an alarm.
@@ -127,7 +127,7 @@ The API never returns 403 or 404 on purpose. The distribution maps those statuse
 | Stream deadline                     | 31 s from opening the model stream                            | Function                      | 31 s                 |
 | Anthropic client                    | 2 s connect, 31 s read, 1 retry                               | Function                      | Same                 |
 | Lambda timeout                      | 35 s                                                          | Lambda                        | 28 s (ADR-005)       |
-| Lambda memory                       | 256 MB, reviewed after Round 4                                | Lambda                        | 256 MB               |
+| Lambda memory                       | 512 MB, raised after Round 5 for cold start                   | Lambda                        | 512 MB               |
 | Concurrency                         | No reserved concurrency; the account limit of 10 is the cap   | Lambda account limit          | 5 reserved (ADR-004) |
 | CloudFront origin response timeout  | 40 s; connection attempts 1                                   | CloudFront                    | —                    |
 | Browser timeout                     | 45 s total                                                    | Client                        | 31 s                 |
@@ -212,12 +212,12 @@ The $10 cap covers about 3,000 typical questions, or about 1,100 at the worst ca
 
 ### Monthly
 
-| Scenario                                            | Anthropic         | AWS                                                      | Notes                                                                                                                                                                                                                                                                                               |
-| --------------------------------------------------- | ----------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Normal (about 300 questions)                        | about $1          | about $7.60                                              | WAF $6 (web ACL $5, one rule $1), Secrets Manager $0.40, plus CloudWatch Logs pennies. Lambda, CloudFront, and request fees stay inside free tiers.                                                                                                                                                 |
-| One persistent abuser                               | $10 (cap reached) | about $7.60                                              | At 20 requests per 10 minutes, one IP sends at most 2,880 a day, enough to reach the cap in under a day at worst-case size. The assistant is paused until the month resets.                                                                                                                         |
-| Distributed abuse, saturating concurrency all month | $10 (cap reached) | up to about $81 Lambda + request fees, plus the baseline | 10 concurrent executions (the account limit) × 30 days × 256 MB ≈ 6.5 million GB-seconds, about $81 after the free tier. After the cap, the pause makes each request fast, so request count, not duration, dominates. The $15 budget alarm fires long before that; the response is the kill switch. |
-| Request flood (L7)                                  | $10 at most       | about $7.60 + about $1.60 per million requests           | CloudFront at $1.00 per million plus WAF at $0.60 per million. Blocked requests are still billed on pay-as-you-go. **Not capped.** The $15 budget alarm detects it, and the response is the kill switch.                                                                                            |
+| Scenario                                            | Anthropic         | AWS                                                       | Notes                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------------- | ----------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Normal (about 300 questions)                        | about $1          | about $7.60                                               | WAF $6 (web ACL $5, one rule $1), Secrets Manager $0.40, plus CloudWatch Logs pennies. Lambda, CloudFront, and request fees stay inside free tiers.                                                                                                                                                                                   |
+| One persistent abuser                               | $10 (cap reached) | about $7.60                                               | At 20 requests per 10 minutes, one IP sends at most 2,880 a day, enough to reach the cap in under a day at worst-case size. The assistant is paused until the month resets.                                                                                                                                                           |
+| Distributed abuse, saturating concurrency all month | $10 (cap reached) | up to about $167 Lambda + request fees, plus the baseline | 10 concurrent executions (the account limit) × 30 days × 512 MB ≈ 13 million GB-seconds, about $167 after the free tier (about $81 at the earlier 256 MB). After the cap, the pause makes each request fast, so request count, not duration, dominates. The $15 budget alarm fires long before that; the response is the kill switch. |
+| Request flood (L7)                                  | $10 at most       | about $7.60 + about $1.60 per million requests            | CloudFront at $1.00 per million plus WAF at $0.60 per million. Blocked requests are still billed on pay-as-you-go. **Not capped.** The $15 budget alarm detects it, and the response is the kill switch.                                                                                                                              |
 
 The flat-rate CloudFront plans have no overage charges, and requests blocked by WAF never count toward their allowance. The Free plan includes 1 million requests, WAF with 5 rules, and IP rate limiting ([flat-rate plans](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/flat-rate-pricing-plan.html)). If the Free plan accepts this distribution, it removes both the $6 WAF baseline and the flood exposure. Whether it does is open, because its feature table lists custom response header rules, which the site's CSP uses, only on the Business tier.
 
@@ -295,11 +295,13 @@ Each round is reviewed before the next starts. Rounds 1 to 3 make no AWS calls a
   - Cold start: about 4 seconds of init; the adapter logged "app is not ready" at 2,000 ms and 4,000 ms. See [Cold start](#cold-start).
 - **Moved to Round 5:** the WAF 429 check, the CSP console check, and mobile.
 
-### Round 5: production evaluation (user-run)
+### Round 5: production evaluation (user-run), done
 
 - **Checklist and results table:** [tests/evaluation/README.md](../../tests/evaluation/README.md#production-evaluation-round-5), run by the owner on the live site, on desktop and a phone.
 - **Acceptance.** Every item passes: grounded answers with working citations, the partial-support follow-up, the plain "no", the fixed refusal for favorite food and Lumen Harbor, the 500-character cap, the WAF 429 message, streaming, no token or cost lines, the privacy note, and no CSP violations.
 - **Records.** Outcomes in that table, without saving answers beyond what the table asks for. Token use comes from the Anthropic Console usage page. Then Slice 2 closes.
+- **Results** (October 18, 2026, desktop; the phone pass was not run). All eleven items pass. The degree answer said "no degree awarded" twice, once per education page; prompt `local-4` asks for one clause when several pages support the same negative. The rate limit returned `429` with the site's message after a burst; the first 30-request burst saw `400`s only, because WAF counts with a delay. Streaming confirmed by eye; the first answer after idle took about 4 seconds.
+- **Polish after Round 5** (deployed by the owner after this round): prompt `local-4`, precompiled bytecode in the asset, and 512 MB of memory (cold start fixes 1 and 2 below).
 
 ## Cold start
 
@@ -320,11 +322,11 @@ Local measurement (October 18, 2026, Apple silicon, Python 3.13; no network, so 
 What this shows:
 
 - **The Anthropic SDK import dominates.** About 1.2 s of it without a cache, mostly `anthropic.types` and `anthropic._models` (pydantic models), plus modules the app never uses that the package's `__init__` imports anyway (Vertex clients, beta resources, the fallback middleware).
-- **The asset ships no bytecode.** Staging removes every `.pyc`, and `/var/task` is read-only, so each cold start compiles 2,569 source files' worth of imports from scratch. That roughly doubles import time locally.
-- **The function has little CPU.** Lambda allocates CPU in proportion to memory; 1,769 MB is one vCPU ([memory and CPU](https://docs.aws.amazon.com/lambda/latest/dg/configuration-memory.html)), so 256 MB is about a seventh of one. CPU-bound imports run correspondingly slower than on a laptop. How much CPU the init phase gets in practice is not documented, so the Lambda numbers below are estimates.
+- **The asset shipped no bytecode** (through Round 5). Staging removed every `.pyc`, and `/var/task` is read-only, so each cold start compiled its imports from 2,569 source files. That roughly doubles import time locally.
+- **The function has little CPU.** Lambda allocates CPU in proportion to memory; 1,769 MB is one vCPU ([memory and CPU](https://docs.aws.amazon.com/lambda/latest/dg/configuration-memory.html)), so the original 256 MB was about a seventh of one. CPU-bound imports run correspondingly slower than on a laptop. How much CPU the init phase gets in practice is not documented, so the Lambda numbers below are estimates.
 - **The secret read** adds one in-region network round trip (typically tens to a few hundred milliseconds; not measured).
 
-Proposed fixes, not made yet (estimated savings against the measured 4 s):
+Fixes 1 and 2 (at 512 MB) are implemented after Round 5; 3 and 4 are not. Estimated savings against the measured 4 s:
 
 | Fix                                                              | Change                                                                                                             | Estimated saving                                                                                                                                                              | Cost or risk                                                                                                                                                                                                 |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -334,6 +336,12 @@ Proposed fixes, not made yet (estimated savings against the measured 4 s):
 | 4. Keep the function warm (provisioned concurrency or SnapStart) | Infrastructure                                                                                                     | Removes most cold starts                                                                                                                                                      | Ongoing cost or snapshot complexity. Not worth it at portfolio traffic.                                                                                                                                      |
 
 Recommendation: 1 and 2 (512 MB) first, measured with the init duration in the function's `REPORT` log line. Add 3 only if the first answer is still slow. Expected result: init around 1–1.5 s.
+
+How fixes 1 and 2 are built:
+
+- **Bytecode.** `pnpm prepare:api` compiles the staged asset with `uv`'s CPython 3.13 (`compileall --invalidation-mode unchecked-hash`, paths rewritten to `/var/task`), then checks that every `.py` file has a `cpython-313` `.pyc` with 3.13's magic number in unchecked-hash mode, and fails otherwise. Unchecked-hash bytecode is used without comparing it to the source, which suits a read-only, immutable asset. The asset is about 40 MB unzipped (about 10 MB zipped), well under Lambda's 250 MB limit.
+- **Memory.** 512 MB in `PortfolioAssistantStack`, which doubles the CPU share. Duration cost per second doubles; normal traffic stays inside the free tier (see the cost model).
+- **What to compare after the deploy.** In the function's log group, the `REPORT` line of the first request after idle has `Init Duration: … ms`. It was about 4,000 ms; the expected value is about 1,000–1,500 ms. The adapter's "app is not ready after …ms" warnings should disappear or drop to one.
 
 ## Runbook
 
